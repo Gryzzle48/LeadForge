@@ -35,6 +35,31 @@ async def test_missing_location(app):
         })
     assert resp.status_code == 422
 
+async def test_radius_above_places_limit(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/api/search", json={
+            "query": "pizza", "location": "NYC", "radius": 90000
+        })
+    assert resp.status_code == 422
+
+async def test_blank_query_fails(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/api/search", json={
+            "query": "   ", "location": "NYC", "radius": 5000
+        })
+    assert resp.status_code == 422
+
+async def test_review_range_must_be_ordered(app):
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/api/search", json={
+            "query": "pizza", "location": "NYC", "radius": 5000,
+            "min_reviews": 50, "max_reviews": 10,
+        })
+    assert resp.status_code == 422
+
 async def test_negative_rating_fails(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

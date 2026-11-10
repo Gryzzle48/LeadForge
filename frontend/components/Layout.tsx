@@ -72,7 +72,7 @@ export default function Layout({ children, campaignId }: LayoutProps) {
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs font-medium text-pearl truncate">Your Account</p>
-              <p className="text-[10px] text-muted">Gmail • 100/day</p>
+              <p className="text-[10px] text-muted">You send manually</p>
             </div>
             <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
           </div>
@@ -106,7 +106,7 @@ export default function Layout({ children, campaignId }: LayoutProps) {
             <div className="flex items-center gap-3">
               <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-shadow/50 rounded-full border border-edge/20">
                 <div className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                <span className="text-xs text-muted">All Systems Go</span>
+                <span className="text-xs text-muted">Drafts only</span>
               </div>
             </div>
           </div>

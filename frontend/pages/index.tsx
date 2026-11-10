@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Search, Zap, Target, Users, Loader2, CheckCircle2, AlertCircle, TrendingUp, MapPin } from 'lucide-react';
 import SearchForm from '../components/SearchForm';
 import StatusBadge from '../components/StatusBadge';
-import { apiFetch } from '../lib/api';
+import { apiFetch, errorMessage, readBody } from '../lib/api';
 import toast from 'react-hot-toast';
 
 export default function Home() {
@@ -12,10 +12,31 @@ export default function Home() {
   const [campaign, setCampaign] = useState(null);
   const [status, setStatus] = useState(null);
   const [polling, setPolling] = useState(false);
+  const [apiProblem, setApiProblem] = useState(null);
   const intervalRef = useRef(null);
 
   useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/health');
+        const body = await readBody(res) as { database?: string };
+        if (cancelled) return;
+        if (!res.ok) {
+          setApiProblem(errorMessage(body, 'The API is not reachable.'));
+          return;
+        }
+        if (!body || body.database !== 'connected') {
+          setApiProblem('The API is up, but the database is not connected. Check DATABASE_URL on the backend.');
+        }
+      } catch {
+        if (!cancelled) {
+          setApiProblem('Cannot reach the API. Set NEXT_PUBLIC_API_URL to the public backend address and redeploy.');
+        }
+      }
+    })();
     return () => {
+      cancelled = true;
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
@@ -24,12 +45,24 @@ export default function Home() {
   }, []);
 
   const handleStart = (data) => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
     setCampaign(data);
+    setStatus(null);
     setPolling(true);
     intervalRef.current = setInterval(async () => {
       try {
         const res = await apiFetch(`/api/search/${data.campaign_id}`);
-        const s = await res.json();
+        const s = await readBody(res) as { status?: string; status_detail?: string };
+        if (!res.ok || !s || !s.status) {
+          clearInterval(intervalRef.current);
+          intervalRef.current = null;
+          setPolling(false);
+          toast.error(errorMessage(s, 'Lost the search status. Check the API connection.'));
+          return;
+        }
         setStatus(s);
         if (s.status === 'completed' || s.status === 'failed') {
           clearInterval(intervalRef.current);
@@ -61,9 +94,15 @@ export default function Home() {
           Find businesses that need your help
         </h1>
         <p className="text-muted text-sm max-w-lg mx-auto">
-          Search any location for businesses without websites. Generate personalized outreach emails. Automate sending via Google Sheets.
+          Search a city for businesses with no website. Save the list to a Google Sheet and draft outreach you send yourself.
         </p>
       </motion.div>
+
+      {apiProblem && (
+        <div className="glass-panel p-4 border-danger/30 text-sm text-pearl">
+          {apiProblem}
+        </div>
+      )}
 
       {/* Search Form */}
       <SearchForm onStart={handleStart} />
@@ -78,7 +117,7 @@ export default function Home() {
         {[
           { icon: Target, label: 'No-Website Filter', value: 'Automatic', desc: 'Places API' },
           { icon: TrendingUp, label: 'Per Category', value: '3 Angles', desc: 'Rotating copy' },
-          { icon: Users, label: 'Gmail Ready', value: 'Batch Send', desc: '8 per 20 min' },
+          { icon: Users, label: 'You send them', value: 'Drafts only', desc: 'Nothing auto-sends' },
         ].map((stat, i) => (
           <div key={i} className="glass-panel-light p-4 text-center">
             <stat.icon className="w-5 h-5 text-ember mx-auto mb-2" />
@@ -144,9 +183,14 @@ export default function Home() {
               <CheckCircle2 className="w-7 h-7 text-jade" />
             </div>
             <h2 className="text-xl font-bold text-pearl mb-1">Search Complete</h2>
-            <p className="text-sm text-muted mb-6">
-              Found <span className="text-pearl font-semibold">{status.total_leads}</span> businesses without websites in {status.location}
-            </p>
+            <div className="mb-6">
+              <p className="text-sm text-muted">
+                Found <span className="text-pearl font-semibold">{status.total_leads}</span> businesses without websites in {status.location}
+              </p>
+              {status.status_detail && (
+                <p className="text-xs text-muted max-w-md mx-auto mt-2">{status.status_detail}</p>
+              )}
+            </div>
             <div className="flex items-center justify-center gap-3">
               <motion.button
                 whileTap={{ scale: 0.95 }}
@@ -178,7 +222,7 @@ export default function Home() {
             className="glass-panel p-6 text-center border-danger/30"
           >
             <AlertCircle className="w-10 h-10 text-danger mx-auto mb-3" />
-            <p className="text-sm text-muted">Search failed. Check your API key and try again.</p>
+            <p className="text-sm text-muted">{status.status_detail || 'Search failed. Check your API key and try again.'}</p>
           </motion.div>
         )}
       </AnimatePresence>

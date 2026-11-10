@@ -3,7 +3,7 @@ import { useRouter } from 'next/router';
 import { motion } from 'framer-motion';
 import { Search, MapPin, Clock, ArrowRight, Loader2, Target } from 'lucide-react';
 import StatusBadge from '../../components/StatusBadge';
-import { apiFetch } from '../../lib/api';
+import { apiFetch, readBody } from '../../lib/api';
 
 export default function CampaignsPage() {
   const router = useRouter();
@@ -14,8 +14,9 @@ export default function CampaignsPage() {
     (async () => {
       try {
         const res = await apiFetch('/api/campaigns');
-        if (res.ok) {
-          setCampaigns(await res.json());
+        const data = await readBody(res);
+        if (res.ok && Array.isArray(data)) {
+          setCampaigns(data);
         }
       } catch (e) {
         console.error(e);

@@ -1,4 +1,3 @@
-import html
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,11 +11,6 @@ from ..auth import client_ip_key
 
 router = APIRouter()
 limiter = Limiter(key_func=client_ip_key)
-
-ALLOWED_FIELDS = {"email", "email_subject", "email_body", "angle_used", "email_status"}
-
-def sanitize(v: str | None) -> str | None:
-    return html.escape(v) if v else v
 
 class LeadUpdate(BaseModel):
     email: str | None = None
@@ -34,8 +28,12 @@ class LeadUpdate(BaseModel):
 
     @field_validator("email", "email_subject", "email_body", "angle_used")
     @classmethod
-    def sanitize_fields(cls, v):
-        return sanitize(v)
+    def limit_text(cls, value):
+        if value is None:
+            return value
+        if len(value) > 20000:
+            raise ValueError("is too long")
+        return value
 
 @router.get("/campaigns/{campaign_id}/leads")
 @limiter.limit("30/minute")
@@ -80,7 +78,7 @@ async def regenerate_lead_email(
     lead.email_subject = subject
     lead.email_body = body
     lead.angle_used = angle
-    lead.email_status = "generated"
+    lead.email_status = "draft"
     await db.commit()
 
     return lead.to_dict()

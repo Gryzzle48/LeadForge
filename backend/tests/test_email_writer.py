@@ -40,3 +40,17 @@ def test_generate_email_returns_subject_body_angle():
     assert len(subject) > 0
     assert "Test Biz" in body
     assert isinstance(angle, str)
+
+def test_braces_in_business_name_do_not_drop_the_draft():
+    subject, body, angle = generate_email("Cafe {Downtown}", "pizzeria", "Austin, TX", 4.2, 10, SAMPLE_TEMPLATES)
+    assert "Cafe (Downtown)" in body
+    assert subject
+    assert angle
+
+def test_barber_uses_the_clinic_template_not_the_bar_keyword():
+    from backend.workers.email_writer import load_templates
+    templates = load_templates()
+    assert match_category("barber", templates) == "clinic"
+    assert match_category("hair salon", templates) == "clinic"
+    assert match_category("hardware store", templates) == "retail"
+    assert match_category("italian restaurant", templates) == "restaurant"
