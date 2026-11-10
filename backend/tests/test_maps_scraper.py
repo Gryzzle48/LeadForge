@@ -6,7 +6,7 @@ def test_parse_gosom_csv_fields_and_email():
         "input_id,link,title,category,address,website,phone,review_count,"
         "review_rating,place_id,emails\n"
         'q1,https://maps.google.com/example,Bluebird Cafe,Cafe,'
-        '1 Main St\, Miami,,+1 305 555 0100,125,4.6,ChIJ123,'
+        '"1 Main St, Miami",,+1 305 555 0100,125,4.6,ChIJ123,'
         '"hello@bluebird.example, team@bluebird.example"\n'
     )
 
