@@ -1,47 +1,73 @@
-# LocalWeb Leads — setup checklist
+# LocalWeb Leads — free local setup
 
-## Required Google configuration
+## What runs locally
 
-1. Enable Places API (New), Geocoding API, and Google Sheets API in a Google Cloud project.
-2. Create a server-side API key for Places and Geocoding. Restrict it to the APIs used by the backend.
-3. Create a service account for Sheets API access.
-4. Create one spreadsheet and add (or let the app create) a tab named Leads.
-5. Share the spreadsheet with the service account email as Editor.
-6. Copy the spreadsheet ID from the URL into GOOGLE_SPREADSHEET_ID.
+- PostgreSQL stores campaigns and leads.
+- gosom/google-maps-scraper runs in Docker as a local service at http://127.0.0.1:8080.
+- FastAPI sends search jobs to that local service and imports its CSV results.
+- Next.js provides the search dashboard.
+- Google Sheets export is optional and uses a Google service account.
+
+No Google Places API key, Geocoding API key, SerpApi key, paid proxy, or hosted scraping account is needed for the local workflow.
+
+## Start the services
+
+From the repository root:
+
+```bash
+docker compose up -d
+```
+
+This starts PostgreSQL and the local Maps scraper. The scraper uses one worker and telemetry is disabled by the Compose environment setting.
+
+Check Docker:
+
+```bash
+docker compose ps
+docker compose logs --tail=100 maps-scraper
+```
+
+The local scraper API is available at http://127.0.0.1:8080. The built-in UI is also available at http://127.0.0.1:8080.
 
 ## Backend environment
 
-Set the following in backend/.env:
+Copy the sample file:
 
-- GOOGLE_MAPS_API_KEY
+```bash
+cp backend/.env.example backend/.env
+```
+
+Set at least:
+
+- MAPS_SCRAPER_API_URL=http://127.0.0.1:8080
+- DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/leadforge
+
+For Google Sheets export only, also set:
+
 - GOOGLE_SERVICE_ACCOUNT_JSON (raw JSON or base64 JSON)
 - GOOGLE_SPREADSHEET_ID
 - GOOGLE_SHEET_TAB_NAME=Leads
-- DATABASE_URL
-- API_KEY (recommended for non-local deployment)
-- CORS_ORIGINS
 
-Do not commit backend/.env or service-account keys.
+Do not commit backend/.env or service-account keys. You do not need to enable Places API, Geocoding API, or billing for this configuration. Enable Google Sheets API only if you use the export feature.
 
-## Search behavior
+## Search behavior and limits
 
-The search uses a business category, city, state, and a maximum requested result count. The maximum is an upper bound. Actual counts depend on the search results returned by Google Places, geographic coverage, and how many businesses already exist in the database.
+Searches use a category plus city/state query and run through the self-hosted gosom scraper. Results are imported into the existing PostgreSQL database, deduplicated globally by Place ID (with a stable fallback key when a Place ID is absent), and filtered to records without a website listed in the Maps result.
 
-The website filter means that the Places response did not contain a website field. It does not prove that the business has no website elsewhere.
+A single search request is capped at 120 requested businesses. Actual results depend on Maps coverage, duplicate records, query quality, and the scraper's ability to retrieve results. A Maps result with no website field does not prove that the business has no website elsewhere.
 
-The current Places response provides phone numbers where available. It does not provide email addresses or Instagram handles as standard Place fields; these are left blank rather than guessed. A separately sourced contact-enrichment stage is required for those fields.
+The scraper is configured with one worker and no proxy rotation. It does not attempt to bypass CAPTCHAs or access restrictions. Google may change its site behavior or block automated access; availability is not guaranteed.
+
+## Contacts
+
+Phone numbers are imported when present in the Maps result. Email and Instagram are not reliably provided for businesses with no website listed. The results page therefore provides direct web-search links; verify the match and use **Edit contacts** to save a phone number, email, or Instagram profile. Saved values are included in the Google Sheets export.
 
 ## Google Sheets columns
 
 Number | Business Name | Category | Google Maps Link | Contacts | City | State
 
-Contacts are newline-separated entries containing whichever values are available, such as Phone, Email, and Instagram.
+The exporter appends to one tab named Leads, skips records already present, and continues numbering from the highest existing row. It does not delete previous rows or create a new spreadsheet per campaign.
 
-## Deduplication
+## Important note
 
-- Database: Google Place ID is globally unique across campaigns.
-- Spreadsheet: existing Google Maps URLs are checked before appending.
-- Fallback: existing rows without a Maps link are compared by normalized business name, city, and state.
-- Numbers continue from the highest existing Number in the sheet.
-
-The application appends to the same Leads tab. It does not create a new spreadsheet per campaign.
+gosom/google-maps-scraper is a separate MIT-licensed open-source project. Its license does not override the terms of external websites. Review applicable Google terms before using automated extraction, and do not try to evade blocks or access controls.
