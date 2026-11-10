@@ -86,11 +86,13 @@ async def _run_scraper_query(
     session: aiohttp.ClientSession,
     query_name: str,
     keyword: str,
-    max_results: int,
 ) -> list[dict]:
+    # The requested count is the number of qualifying leads to save, not the
+    # number of raw Maps results. Fetch the deepest candidate set so filtering
+    # for missing websites and global deduplication can still fill the target.
     # gosom's local web runner expects max_time in seconds. Its API converts
     # that value to a Go duration internally.
-    depth = max(1, min(10, (max_results + 19) // 20))
+    depth = 10
     payload = {
         "Name": query_name,
         "keywords": [keyword],
@@ -161,11 +163,11 @@ async def _run_scraper_query(
             )
         csv_content = await response.text()
 
-    return parse_scraper_csv(csv_content)[:max_results]
+    return parse_scraper_csv(csv_content)
 
 
 async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
-    """Run one local gosom scrape and persist only businesses without a listed website."""
+    """Scrape a broad candidate set and save up to the requested qualifying lead count."""
     async with async_session() as db:
         result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
         campaign = result.scalar_one_or_none()
@@ -188,7 +190,6 @@ async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
                     session,
                     query_name=f"{req.query} - {campaign.city}, {campaign.state}",
                     keyword=keyword,
-                    max_results=max_results,
                 )
 
             existing_result = await db.execute(select(Lead.place_id))
