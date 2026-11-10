@@ -23,8 +23,8 @@ Check the provider's current plans and search quota before running a large campa
 ## Bulk search behavior
 
 - One external search query is made for each business missing at least one of email or Instagram.
-- The browser processes the queue with two workers and spaces request starts by six seconds to stay within the backend endpoint's 10-requests-per-minute limit.
-- The progress bar shows completed businesses, newly found contacts, and errors.
+- The browser processes the queue with two workers and spaces request starts by 6.5 seconds, leaving a margin below the backend endpoint's 10-requests-per-minute limit.
+- The progress bar shows completed businesses, newly found contacts, and errors; up to five failed businesses are listed with their error messages.
 - **Stop search** prevents new queued requests from starting. Searches already in progress may finish and save their results.
 - Businesses that already have both email and Instagram are skipped by the backend without spending an external search.
 - The queue runs while the campaign page remains open. Leaving the page stops additional queued searches; completed results remain saved in the database.
