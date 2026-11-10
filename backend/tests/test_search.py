@@ -62,6 +62,23 @@ def test_city_state_and_result_limit_are_normalized():
     assert request.max_results == 120
 
 
+def test_region_scope_does_not_require_city_and_normalizes_location():
+    request = SearchRequest(
+        query="plumbers",
+        location_scope="region",
+        state="Florida",
+        max_results=50,
+    )
+    assert request.city is None
+    assert request.state == "Florida"
+    assert request.location == "Florida, United States"
+
+
+def test_region_scope_requires_region_name():
+    with pytest.raises(ValidationError):
+        SearchRequest(query="plumbers", location_scope="region")
+
+
 def test_legacy_location_field_remains_supported():
     request = SearchRequest(query="barbershop", location="Austin, TX")
     assert request.city == "Austin"
