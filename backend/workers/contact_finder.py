@@ -5,11 +5,11 @@ from urllib.parse import urlparse
 
 import aiohttp
 
-from ..config import GOOGLE_CSE_API_KEY, GOOGLE_CSE_CX
+from ..config import SERPAPI_API_KEY
 
 logger = logging.getLogger(__name__)
 
-CSE_ENDPOINT = "https://www.googleapis.com/customsearch/v1"
+SERPAPI_ENDPOINT = "https://serpapi.com/search.json"
 EMAIL_RE = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
 INSTAGRAM_RE = re.compile(
     r"https?://(?:www\.)?instagram\.com/[A-Za-z0-9._]+/?",
@@ -66,29 +66,27 @@ async def find_public_contacts(
     city: str | None,
     state: str | None,
 ) -> dict:
-    """Find contact details from public Google Search results, not Maps content."""
-    if not GOOGLE_CSE_API_KEY or not GOOGLE_CSE_CX:
+    """Find public business contacts from web search snippets and result URLs."""
+    if not SERPAPI_API_KEY:
         raise RuntimeError(
-            "Contact search is not configured. Set GOOGLE_CSE_API_KEY and GOOGLE_CSE_CX."
+            "Contact search is not configured. Set SERPAPI_API_KEY in backend/.env."
         )
 
     location = " ".join(part for part in (city, state) if part)
     query = f'"{business_name}" {location} (email OR contact OR Instagram)'.strip()
     params = {
-        "key": GOOGLE_CSE_API_KEY,
-        "cx": GOOGLE_CSE_CX,
+        "engine": "google",
         "q": query,
+        "api_key": SERPAPI_API_KEY,
         "num": 10,
     }
 
-    timeout = aiohttp.ClientTimeout(total=15, connect=5)
-    connector = aiohttp.TCPConnector(limit=2)
-    async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
+    timeout = aiohttp.ClientTimeout(total=20, connect=5)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
-            async with session.get(CSE_ENDPOINT, params=params) as response:
+            async with session.get(SERPAPI_ENDPOINT, params=params) as response:
                 if response.status != 200:
-                    body = (await response.text())[:300]
-                    logger.warning("Custom Search API returned %s: %s", response.status, body)
+                    logger.warning("Search provider returned HTTP %s", response.status)
                     raise RuntimeError(f"Contact search provider returned HTTP {response.status}.")
                 payload = await response.json()
         except asyncio.TimeoutError as exc:
@@ -96,4 +94,4 @@ async def find_public_contacts(
         except aiohttp.ClientError as exc:
             raise RuntimeError("Could not reach the contact search provider.") from exc
 
-    return _extract_contacts(payload.get("items") or [])
+    return _extract_contacts(payload.get("organic_results") or [])
