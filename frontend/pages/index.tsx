@@ -115,7 +115,7 @@ export default function Home() {
         className="grid grid-cols-3 gap-3"
       >
         {[
-          { icon: Target, label: 'No-Website Filter', value: 'Automatic', desc: 'Places API' },
+          { icon: Target, label: 'No-Website Filter', value: 'Automatic', desc: 'Local scraper' },
           { icon: TrendingUp, label: 'Per Category', value: '3 Angles', desc: 'Rotating copy' },
           { icon: Users, label: 'You send them', value: 'Drafts only', desc: 'Nothing auto-sends' },
         ].map((stat, i) => (
@@ -222,7 +222,7 @@ export default function Home() {
             className="glass-panel p-6 text-center border-danger/30"
           >
             <AlertCircle className="w-10 h-10 text-danger mx-auto mb-3" />
-            <p className="text-sm text-muted">{status.status_detail || 'Search failed. Check your API key and try again.'}</p>
+            <p className="text-sm text-muted">{status.status_detail || 'Search failed. Check that the maps scraper is running.'}</p>
           </motion.div>
         )}
       </AnimatePresence>

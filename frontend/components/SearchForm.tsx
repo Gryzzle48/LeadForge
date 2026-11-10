@@ -46,13 +46,13 @@ export default function SearchForm({ onStart }: SearchFormProps) {
       });
       const data = await readBody(res);
       if (!res.ok || !data || typeof data !== 'object' || !('campaign_id' in data)) {
-        toast.error(errorMessage(data, 'Search did not start. Check the backend URL and API key.'));
+        toast.error(errorMessage(data, 'Search did not start. Check the backend and the maps scraper.'));
         return;
       }
       onStart(data as { campaign_id: number; status: string });
     } catch (err) {
       console.error(err);
-      toast.error('Search failed. Check your API key and try again.');
+      toast.error('Search failed. Check that the maps scraper is running.');
     } finally {
       setLoading(false);
     }

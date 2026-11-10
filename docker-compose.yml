@@ -12,5 +12,18 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  # Self-hosted Google Maps scraper. No Google Places API key.
+  # First start downloads a browser and can take a few minutes.
+  # API docs: http://localhost:8080/api/docs
+  gmaps:
+    image: gosom/google-maps-scraper:latest
+    command: ["-data-folder", "/gmapsdata", "-addr", ":8080"]
+    ports:
+      - "8080:8080"
+    shm_size: "1gb"
+    volumes:
+      - gmapsdata:/gmapsdata
+
 volumes:
   pgdata:
+  gmapsdata:

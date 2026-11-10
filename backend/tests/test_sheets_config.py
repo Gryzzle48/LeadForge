@@ -9,6 +9,7 @@ from backend.workers.sheet_exporter import (
     SheetExportError,
     lead_row,
     load_service_account_info,
+    plan_append,
 )
 
 
@@ -68,6 +69,7 @@ def test_lead_row_has_the_fields_needed_to_call_them():
     assert HEADERS == [
         "Name", "Category", "Address", "Phone", "Maps link", "Rating",
         "Reviews", "Website", "Email", "Subject", "Draft", "Status", "Notes",
+        "Place ID",
     ]
     assert row[0] == "Ada's Bakery"
     assert row[1] == "Bakery"
@@ -78,4 +80,50 @@ def test_lead_row_has_the_fields_needed_to_call_them():
     assert row[6] == 12
     assert row[7] == ""
     assert row[10] == "Draft body"
+    assert row[-1] == "abc"
     assert row.count("Ada's Bakery") == 1
+
+
+def test_append_skips_rows_already_on_the_sheet():
+    existing = [[
+        "Name", "Phone", "Maps link",
+    ], [
+        "Ada's Bakery", "+1 512-555-0100", "https://maps.example/ada",
+    ]]
+    incoming = [{
+        "name": "Ada's Bakery",
+        "phone": "+1 512-555-0100",
+        "maps": "https://maps.example/ada",
+        "place_id": "abc",
+        "address": "1 Main St",
+        "category": "Bakery",
+        "rating": 4.6,
+        "reviews": 12,
+        "website": "",
+        "email": "",
+        "subject": "Hello",
+        "draft": "Draft",
+        "status": "draft",
+        "notes": "",
+    }, {
+        "name": "New Cafe",
+        "phone": "+1 512-555-0199",
+        "maps": "https://maps.example/new",
+        "place_id": "new",
+        "address": "2 Main St",
+        "category": "Cafe",
+        "rating": 4.2,
+        "reviews": 8,
+        "website": "",
+        "email": "",
+        "subject": "",
+        "draft": "",
+        "status": "draft",
+        "notes": "",
+    }]
+    header, rows, skipped = plan_append(existing, incoming, "Leads")
+    assert skipped == 1
+    assert len(rows) == 1
+    assert "Place ID" in header
+    assert rows[0][header.index("Name")] == "New Cafe"
+    assert rows[0][header.index("Place ID")] == "new"
