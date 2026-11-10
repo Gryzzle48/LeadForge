@@ -44,7 +44,7 @@ async def test_missing_location(app):
 
 async def test_negative_rating_fails(app):
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         resp = await client.post("/api/search", json={
             "query": "pizza", "location": "NYC", "min_rating": -1
         })
@@ -71,4 +71,4 @@ def test_legacy_location_field_remains_supported():
 
 def test_result_limit_is_bounded():
     with pytest.raises(ValidationError):
-        SearchRequest(query="coffee shops", city="Miami", state="Florida", max_results=501)
+        SearchRequest(query="coffee shops", city="Miami", state="Florida", max_results=121)
