@@ -64,7 +64,7 @@ export default function CampaignPage() {
         </button>
       </div>
 
-      <ResultsTable leads={leads} city={campaign?.city} state={campaign?.state} />
+      <ResultsTable leads={leads} campaignId={id as string} city={campaign?.city} state={campaign?.state} />
     </div>
   );
 }
