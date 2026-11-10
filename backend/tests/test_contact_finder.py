@@ -6,7 +6,7 @@ def test_extracts_public_email_instagram_and_sources():
         {
             "title": "Sunrise Coffee - Contact",
             "link": "https://sunrisecoffee.example/contact",
-            "snippet": "Email hello@sunrisecoffee.example or follow https://www.instagram.com/sunrisecoffee/",
+            "snippet": "Email <hello@sunrisecoffee.example> or follow https://www.instagram.com/sunrisecoffee/",
         }
     ])
 
@@ -45,3 +45,12 @@ def test_deduplicates_contacts():
     assert result["email"] == "hello@business.example"
     assert result["instagram_url"] == "https://www.instagram.com/business"
     assert len(result["sources"]) == 2
+
+
+def test_ignores_malformed_results_and_normalizes_wrapped_email():
+    result = _extract_contacts([
+        None,
+        {"title": "Contact", "link": "", "snippet": "(Team@Business.example)."},
+    ])
+
+    assert result["email"] == "team@business.example"
