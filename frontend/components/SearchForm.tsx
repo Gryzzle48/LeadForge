@@ -10,6 +10,7 @@ interface SearchFormProps {
 
 export default function SearchForm({ onStart }: SearchFormProps) {
   const [query, setQuery] = useState('');
+  const [locationScope, setLocationScope] = useState<'city' | 'region'>('city');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
   const [maxResults, setMaxResults] = useState('50');
@@ -17,8 +18,10 @@ export default function SearchForm({ onStart }: SearchFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim() || !city.trim() || !state.trim()) {
-      toast.error('Enter a business category, city and state.');
+    if (!query.trim() || !state.trim() || (locationScope === 'city' && !city.trim())) {
+      toast.error(locationScope === 'city'
+        ? 'Enter a business category, city and state.'
+        : 'Enter a business category and region/state.');
       return;
     }
 
@@ -35,7 +38,8 @@ export default function SearchForm({ onStart }: SearchFormProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: query.trim(),
-          city: city.trim(),
+          location_scope: locationScope,
+          city: locationScope === 'city' ? city.trim() : null,
           state: state.trim(),
           country: 'United States',
           max_results: count,
@@ -90,25 +94,59 @@ export default function SearchForm({ onStart }: SearchFormProps) {
           </div>
         </div>
 
-        <div>
-          <label className="input-label">City</label>
-          <div className="relative">
-            <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-            <input
-              className="input pl-10"
-              placeholder="e.g. Miami"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-              required
-            />
+        <div className="md:col-span-2">
+          <label className="input-label">Search Area</label>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              aria-pressed={locationScope === 'city'}
+              onClick={() => setLocationScope('city')}
+              className={`rounded-xl border px-4 py-3 text-sm font-medium transition-colors ${
+                locationScope === 'city'
+                  ? 'border-ember bg-ember/10 text-pearl'
+                  : 'border-edge/40 bg-shadow/20 text-muted hover:text-pearl'
+              }`}
+            >
+              City
+            </button>
+            <button
+              type="button"
+              aria-pressed={locationScope === 'region'}
+              onClick={() => setLocationScope('region')}
+              className={`rounded-xl border px-4 py-3 text-sm font-medium transition-colors ${
+                locationScope === 'region'
+                  ? 'border-ember bg-ember/10 text-pearl'
+                  : 'border-edge/40 bg-shadow/20 text-muted hover:text-pearl'
+              }`}
+            >
+              State / Region
+            </button>
           </div>
         </div>
 
-        <div>
-          <label className="input-label">State</label>
+        {locationScope === 'city' && (
+          <div>
+            <label className="input-label">City</label>
+            <div className="relative">
+              <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
+              <input
+                className="input pl-10"
+                placeholder="e.g. Miami"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                required
+              />
+            </div>
+          </div>
+        )}
+
+        <div className={locationScope === 'region' ? 'md:col-span-2' : ''}>
+          <label className="input-label">{locationScope === 'city' ? 'State' : 'Region / State'}</label>
           <input
             className="input"
-            placeholder="e.g. Florida or FL"
+            placeholder={locationScope === 'city'
+              ? 'e.g. Florida or FL'
+              : 'e.g. Florida, Southern California, New England'}
             value={state}
             onChange={(e) => setState(e.target.value)}
             required
@@ -138,7 +176,7 @@ export default function SearchForm({ onStart }: SearchFormProps) {
 
       <div className="rounded-xl bg-shadow/30 border border-edge/20 p-4 text-xs text-muted flex items-start gap-2">
         <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5" />
-        <span>Country: United States. The number above is the target number of unique businesses to return after filtering out listings with websites and duplicates. LeadForge searches a broader candidate set; the final count can be lower if Maps does not provide enough qualifying businesses.</span>
+        <span>Country: United States. Choose a city for a local search or a state/region for a broader search. The target is the number of unique businesses to return after filtering out listed websites and duplicates. Regional searches are broad Maps queries, not a guarantee that every business in a large area will be found.</span>
       </div>
 
       <motion.button
