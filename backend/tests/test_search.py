@@ -1,4 +1,8 @@
+import pytest
+from pydantic import ValidationError
 from httpx import ASGITransport, AsyncClient
+from backend.routers.search import SearchRequest
+
 
 async def test_radius_below_minimum(app):
     transport = ASGITransport(app=app)
@@ -8,8 +12,8 @@ async def test_radius_below_minimum(app):
         })
     assert resp.status_code == 422
     body = resp.json()
-    detail = body["detail"][0] if isinstance(body["detail"], list) else body["detail"]
-    assert any("radius" in str(e) for e in (body["detail"] if isinstance(body["detail"], list) else [body["detail"]]))
+    assert any("radius" in str(error) for error in body["detail"])
+
 
 async def test_radius_at_minimum(app):
     transport = ASGITransport(app=app)
@@ -19,6 +23,7 @@ async def test_radius_at_minimum(app):
         })
     assert resp.status_code in (200, 422)
 
+
 async def test_missing_query(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -26,6 +31,7 @@ async def test_missing_query(app):
             "location": "NYC", "radius": 5000
         })
     assert resp.status_code == 422
+
 
 async def test_missing_location(app):
     transport = ASGITransport(app=app)
@@ -35,6 +41,7 @@ async def test_missing_location(app):
         })
     assert resp.status_code == 422
 
+
 async def test_negative_rating_fails(app):
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -42,3 +49,26 @@ async def test_negative_rating_fails(app):
             "query": "pizza", "location": "NYC", "min_rating": -1
         })
     assert resp.status_code == 422
+
+
+def test_city_state_and_result_limit_are_normalized():
+    request = SearchRequest(
+        query="coffee shops",
+        city="Miami",
+        state="Florida",
+        max_results=120,
+    )
+    assert request.location == "Miami, Florida, United States"
+    assert request.max_results == 120
+
+
+def test_legacy_location_field_remains_supported():
+    request = SearchRequest(query="barbershop", location="Austin, TX")
+    assert request.city == "Austin"
+    assert request.state == "TX"
+    assert request.location == "Austin, TX, United States"
+
+
+def test_result_limit_is_bounded():
+    with pytest.raises(ValidationError):
+        SearchRequest(query="coffee shops", city="Miami", state="Florida", max_results=501)

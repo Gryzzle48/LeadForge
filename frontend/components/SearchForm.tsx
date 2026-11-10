@@ -10,31 +10,48 @@ interface SearchFormProps {
 
 export default function SearchForm({ onStart }: SearchFormProps) {
   const [query, setQuery] = useState('');
-  const [location, setLocation] = useState('');
-  const [radius, setRadius] = useState(50000);
-  const [minRating, setMinRating] = useState('');
+  const [city, setCity] = useState('');
+  const [state, setState] = useState('');
+  const [maxResults, setMaxResults] = useState('100');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query || !location) return;
+    if (!query.trim() || !city.trim() || !state.trim()) {
+      toast.error('Enter a business category, city and state.');
+      return;
+    }
+
+    const count = Number(maxResults);
+    if (!Number.isInteger(count) || count < 1 || count > 500) {
+      toast.error('Maximum results must be between 1 and 500.');
+      return;
+    }
+
     setLoading(true);
     try {
       const res = await apiFetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          query,
-          location,
-          radius,
-          min_rating: minRating ? parseFloat(minRating) : null,
+          query: query.trim(),
+          city: city.trim(),
+          state: state.trim(),
+          country: 'United States',
+          max_results: count,
+          radius: 50000,
         }),
       });
+
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error.detail || 'Search request failed.');
+      }
       const data = await res.json();
       onStart(data);
     } catch (err) {
       console.error(err);
-      toast.error('Search failed. Check your API key and try again.');
+      toast.error(err instanceof Error ? err.message : 'Search failed. Check your API key and try again.');
     } finally {
       setLoading(false);
     }
@@ -54,18 +71,18 @@ export default function SearchForm({ onStart }: SearchFormProps) {
         </div>
         <div>
           <h2 className="text-lg font-semibold text-pearl">New Lead Search</h2>
-          <p className="text-sm text-muted">Find businesses without websites in any area</p>
+          <p className="text-sm text-muted">Find businesses without a website listed in Google Maps</p>
         </div>
       </div>
 
       <div className="grid md:grid-cols-2 gap-5">
         <div>
-          <label className="input-label">Business Type</label>
+          <label className="input-label">Business Category</label>
           <div className="relative">
             <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
             <input
               className="input pl-10"
-              placeholder="e.g. restaurant, plumber, dentist"
+              placeholder="e.g. coffee shop, barbershop, auto detailing"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               required
@@ -74,54 +91,54 @@ export default function SearchForm({ onStart }: SearchFormProps) {
         </div>
 
         <div>
-          <label className="input-label">Location</label>
+          <label className="input-label">City</label>
           <div className="relative">
             <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
             <input
               className="input pl-10"
-              placeholder="e.g. Austin, TX"
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
+              placeholder="e.g. Miami"
+              value={city}
+              onChange={(e) => setCity(e.target.value)}
               required
             />
           </div>
+        </div>
+
+        <div>
+          <label className="input-label">State</label>
+          <input
+            className="input"
+            placeholder="e.g. Florida or FL"
+            value={state}
+            onChange={(e) => setState(e.target.value)}
+            required
+          />
+        </div>
+
+        <div>
+          <label className="input-label">Maximum Businesses</label>
+          <input
+            className="input"
+            type="number"
+            min="1"
+            max="500"
+            step="1"
+            value={maxResults}
+            onChange={(e) => setMaxResults(e.target.value)}
+            required
+          />
         </div>
       </div>
 
       <div className="flex items-center gap-2 mt-6 mb-3">
         <SlidersHorizontal className="w-3.5 h-3.5 text-muted" />
-        <span className="text-xs font-medium text-muted uppercase tracking-wider">Filters</span>
+        <span className="text-xs font-medium text-muted uppercase tracking-wider">Search settings</span>
         <div className="flex-1 h-px bg-edge/30" />
       </div>
 
-      <div className="grid md:grid-cols-2 gap-5">
-        <div>
-          <label className="input-label">Search Radius</label>
-          <select
-            className="input"
-            value={radius}
-            onChange={(e) => setRadius(parseInt(e.target.value))}
-          >
-            <option value={5000}>5 km — Small area</option>
-            <option value={10000}>10 km</option>
-            <option value={25000}>25 km</option>
-            <option value={50000}>50 km — City-wide</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="input-label">Min. Rating (optional)</label>
-          <input
-            className="input"
-            type="number"
-            min="1"
-            max="5"
-            step="0.5"
-            placeholder="e.g. 4.0"
-            value={minRating}
-            onChange={(e) => setMinRating(e.target.value)}
-          />
-        </div>
+      <div className="rounded-xl bg-shadow/30 border border-edge/20 p-4 text-xs text-muted flex items-start gap-2">
+        <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5" />
+        <span>Country: United States. The search scans the selected city and state, up to the maximum number of new businesses without a website listed.</span>
       </div>
 
       <motion.button
@@ -133,12 +150,12 @@ export default function SearchForm({ onStart }: SearchFormProps) {
         {loading ? (
           <>
             <Loader2 className="w-4 h-4 animate-spin" />
-            Scanning...
+            Searching...
           </>
         ) : (
           <>
             <Search className="w-4 h-4" />
-            Find Leads
+            Find Businesses
           </>
         )}
       </motion.button>
