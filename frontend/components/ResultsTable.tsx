@@ -54,6 +54,11 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
     }));
   }, [leads]);
 
+  useEffect(() => {
+    // Do not keep scheduling new searches after the user leaves this campaign.
+    return () => { batchCancelRef.current = true; };
+  }, []);
+
   const enrichLead = async (leadId: number) => {
     setEnrichingIds((current) => current.includes(leadId) ? current : [...current, leadId]);
     try {
