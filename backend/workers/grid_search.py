@@ -1,101 +1,134 @@
-import asyncio
-import aiohttp
-import math
 import logging
+
+import aiohttp
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
+
+from ..config import GOOGLE_MAPS_API_KEY
 from ..database import async_session
 from ..models.campaign import Campaign, CampaignStatus
 from ..models.lead import Lead
-from ..config import GOOGLE_MAPS_API_KEY, MAX_RESULTS_PER_QUERY, SEARCH_RADIUS_METERS, OVERLAP_FACTOR
 from .email_writer import generate_emails_for_campaign
+from .places import (
+    MAX_DETAIL_LOOKUPS,
+    MAX_RADIUS_METERS,
+    PlacesClient,
+    category_label,
+    circle_bounds,
+    fetch_details_map,
+    has_real_website,
+    inside_circle,
+    maps_link,
+    normalize_place_id,
+    phone_of,
+    place_location,
+    place_name,
+    resolve_origin,
+    select_leads,
+    summarize_search,
+    walk_area,
+)
 
 logger = logging.getLogger(__name__)
 
-PLACES_API_BASE = "https://places.googleapis.com/v1/places:searchText"
-GEOCODING_API_BASE = "https://maps.googleapis.com/maps/api/geocode/json"
-FIELDS_MASK = "places.id,places.displayName,places.formattedAddress,places.internationalPhoneNumber,places.websiteUri,places.rating,places.userRatingCount,places.primaryType"
 
-def grid_circles(lat: float, lng: float, radius_m: int, step_m: int | None = None):
-    if step_m is None:
-        step_m = int(radius_m * OVERLAP_FACTOR)
-    circles = []
-    dlat = step_m / 111320
-    dlng = step_m / (111320 * abs(math.cos(math.radians(lat))) + 1e-6)
-    rlat = radius_m / 111320
-    rlng = radius_m / (111320 * abs(math.cos(math.radians(lat))) + 1e-6)
-    lat_start = lat - rlat
-    lat_end = lat + rlat
-    lng_start = lng - rlng
-    lng_end = lng + rlng
-    lat_c = lat_start
-    while lat_c <= lat_end:
-        lng_c = lng_start
-        while lng_c <= lng_end:
-            circles.append((round(lat_c, 6), round(lng_c, 6)))
-            lng_c += dlng
-        lat_c += dlat
-    return circles
+def _clip(value, limit: int) -> str:
+    text = "" if value is None else str(value)
+    return text[:limit]
 
-async def search_places(session: aiohttp.ClientSession, lat: float, lng: float, query: str, radius: int, min_rating: float | None = None) -> tuple[list, bool]:
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
-        "X-Goog-FieldMask": FIELDS_MASK,
-    }
-    body = {
-        "textQuery": query,
-        "locationBias": {
-            "circle": {
-                "center": {"latitude": lat, "longitude": lng},
-                "radius": min(radius, SEARCH_RADIUS_METERS),
-            }
-        },
-        "pageSize": MAX_RESULTS_PER_QUERY,
-    }
-    if min_rating:
-        body["minRating"] = min_rating
 
+def _as_float(value):
     try:
-        async with session.post(PLACES_API_BASE, json=body, headers=headers) as resp:
-            if resp.status != 200:
-                text = await resp.text()
-                logger.error(f"Places API error {resp.status} at ({lat},{lng}): {text[:200]}")
-                return [], True
-            data = await resp.json()
-            places = data.get("places", [])
-            return places, False
-    except asyncio.TimeoutError:
-        logger.warning(f"Places API timeout at ({lat},{lng})")
-        return [], True
-    except aiohttp.ClientError as e:
-        logger.error(f"Places API request failed at ({lat},{lng}): {e}")
-        return [], True
-    except Exception as e:
-        logger.exception(f"Unexpected error in search_places at ({lat},{lng}): {e}")
-        return [], True
-
-async def geocode_location(session: aiohttp.ClientSession, location: str) -> tuple[float, float] | None:
-    params = {
-        "address": location,
-        "key": GOOGLE_MAPS_API_KEY,
-    }
-    try:
-        async with session.get(GEOCODING_API_BASE, params=params) as resp:
-            if resp.status != 200:
-                logger.error(f"Geocoding API error {resp.status} for '{location}'")
-                return None
-            data = await resp.json()
-            if data.get("status") != "OK":
-                logger.error(f"Geocoding failed for '{location}': {data.get('status')}")
-                return None
-            loc = data["results"][0]["geometry"]["location"]
-            return (loc["lat"], loc["lng"])
-    except Exception as e:
-        logger.exception(f"Geocoding exception for '{location}': {e}")
+        if value is None or value == "":
+            return None
+        return float(value)
+    except (TypeError, ValueError):
         return None
 
-async def run_grid_search(campaign_id: int, req, db_session: AsyncSession):
+
+def _as_int(value):
+    try:
+        if value is None or value == "":
+            return None
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def lead_from_place(campaign_id: int, place: dict) -> Lead:
+    return Lead(
+        campaign_id=campaign_id,
+        place_id=_clip(normalize_place_id(place), 255),
+        name=_clip(place_name(place), 255),
+        address=_clip(place.get("formattedAddress") or "", 500),
+        phone=_clip(phone_of(place), 50),
+        category=_clip(category_label(place), 255),
+        rating=_as_float(place.get("rating")),
+        review_count=_as_int(place.get("userRatingCount")),
+        website_uri=_clip(place.get("websiteUri") or "", 500),
+        has_website=False,
+        maps_url=maps_link(place),
+        email_status="draft",
+    )
+
+
+def _copy_lead(source: Lead) -> Lead:
+    return Lead(
+        campaign_id=source.campaign_id,
+        place_id=source.place_id,
+        name=source.name,
+        address=source.address,
+        phone=source.phone,
+        category=source.category,
+        rating=source.rating,
+        review_count=source.review_count,
+        website_uri=source.website_uri,
+        has_website=False,
+        maps_url=source.maps_url,
+        email_status="draft",
+    )
+
+
+async def _save_leads(db, leads: list[Lead]) -> int:
+    if not leads:
+        return 0
+    try:
+        async with db.begin_nested():
+            db.add_all(leads)
+    except IntegrityError:
+        logger.warning("Batch insert hit a duplicate place id; saving one by one")
+    else:
+        await db.commit()
+        return len(leads)
+
+    saved = 0
+    for source in leads:
+        try:
+            async with db.begin_nested():
+                db.add(_copy_lead(source))
+        except IntegrityError:
+            continue
+        saved += 1
+    await db.commit()
+    return saved
+
+
+async def _mark_failed(campaign_id: int, message: str):
+    try:
+        async with async_session() as db:
+            result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
+            campaign = result.scalar_one_or_none()
+            if not campaign:
+                return
+            if campaign.status in (CampaignStatus.PENDING.value, CampaignStatus.RUNNING.value):
+                campaign.status = CampaignStatus.FAILED.value
+                campaign.status_detail = message[:4000]
+                await db.commit()
+    except Exception:
+        logger.exception("Could not record failure for campaign %s", campaign_id)
+
+
+async def _execute(campaign_id: int, req):
     async with async_session() as db:
         result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
         campaign = result.scalar_one_or_none()
@@ -105,79 +138,110 @@ async def run_grid_search(campaign_id: int, req, db_session: AsyncSession):
         campaign.status = CampaignStatus.RUNNING.value
         await db.commit()
 
-        lat = req.lat
-        lng = req.lng
-        radius = req.radius or 50000
-
-        if lat is None or lng is None:
-            async with aiohttp.ClientSession() as geo_session:
-                coords = await geocode_location(geo_session, req.location)
-            if coords:
-                lat, lng = coords
-                campaign.lat = lat
-                campaign.lng = lng
-                await db.commit()
-                logger.info(f"Geocoded '{req.location}' → ({lat}, {lng})")
-            else:
-                lat, lng = 40.7128, -74.0060
-                logger.warning(f"Geocoding failed for '{req.location}', falling back to NYC ({lat}, {lng})")
-
-        centers = grid_circles(lat, lng, radius)
-        seen_place_ids = set()
-
-        existing = await db.execute(select(Lead.place_id))
-        for row in existing:
-            seen_place_ids.add(row[0])
-
-        all_leads = []
-        total_errors = 0
-        total_attempts = 0
-        async with aiohttp.ClientSession() as session:
-            tasks = []
-            for clat, clng in centers:
-                tasks.append(search_places(session, clat, clng, req.query, radius, req.min_rating))
-            batch_size = 5
-            for i in range(0, len(tasks), batch_size):
-                batch = tasks[i:i+batch_size]
-                results = await asyncio.gather(*batch)
-                for places, is_error in results:
-                    total_attempts += 1
-                    if is_error:
-                        total_errors += 1
-                    for place in places:
-                        pid = place.get("id")
-                        if not pid or pid in seen_place_ids:
-                            continue
-                        seen_place_ids.add(pid)
-                        website = place.get("websiteUri") or ""
-                        has_web = bool(website.strip())
-                        if has_web:
-                            continue
-                        cat = place.get("primaryType") or place.get("displayName", {}).get("text", "")
-                        name = place.get("displayName", {}).get("text", "Unknown")
-                        lead = Lead(
-                            campaign_id=campaign_id,
-                            place_id=pid,
-                            name=name,
-                            address=place.get("formattedAddress", ""),
-                            phone=place.get("internationalPhoneNumber", ""),
-                            category=cat,
-                            rating=place.get("rating"),
-                            review_count=place.get("userRatingCount"),
-                            website_uri=website,
-                            has_website=has_web,
-                            email_status="no_email",
-                        )
-                        db.add(lead)
-                        all_leads.append(pid)
-                await db.commit()
-
-        campaign.total_leads = len(all_leads)
-        if total_attempts > 0 and total_errors == total_attempts:
+        if not GOOGLE_MAPS_API_KEY:
             campaign.status = CampaignStatus.FAILED.value
-            logger.error(f"Campaign {campaign_id}: all {total_errors} Places API calls failed")
-        else:
-            campaign.status = CampaignStatus.COMPLETED.value
-        await db.commit()
+            campaign.status_detail = "GOOGLE_MAPS_API_KEY is not set on the server."
+            await db.commit()
+            return
 
-    await generate_emails_for_campaign(campaign_id)
+        radius = min(int(req.radius or 10000), MAX_RADIUS_METERS)
+        timeout = aiohttp.ClientTimeout(total=30, connect=10, sock_read=20)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            client = PlacesClient(session, GOOGLE_MAPS_API_KEY)
+            geocoded = None
+            if req.lat is None or req.lng is None:
+                geocoded = await client.geocode(req.location)
+            origin, origin_error = resolve_origin(req.lat, req.lng, geocoded)
+            if origin_error or origin is None:
+                campaign.status = CampaignStatus.FAILED.value
+                campaign.status_detail = origin_error or "Could not find that location."
+                await db.commit()
+                return
+
+            lat, lng, area_label = origin
+            campaign.lat = lat
+            campaign.lng = lng
+            await db.commit()
+
+            text_query = f"{req.query} in {req.location}"
+            bounds = circle_bounds(lat, lng, radius)
+
+            async def search_cell(cell):
+                return await client.search_cell(text_query, cell, req.min_rating)
+
+            found, errors, _used, truncated = await walk_area(search_cell, bounds)
+
+            existing = await db.execute(select(Lead.place_id))
+            seen_ids = {row[0] for row in existing if row[0]}
+
+            detail_ids = []
+            seen_for_details = set(seen_ids)
+            for place in found:
+                pid = normalize_place_id(place)
+                if not pid or pid in seen_for_details:
+                    continue
+                seen_for_details.add(pid)
+                if place.get("businessStatus") == "CLOSED_PERMANENTLY":
+                    continue
+                plat, plng = place_location(place)
+                if not inside_circle(plat, plng, lat, lng, radius):
+                    continue
+                if has_real_website(place.get("websiteUri")):
+                    continue
+                detail_ids.append(pid)
+
+            skipped_for_cap = set(detail_ids[MAX_DETAIL_LOOKUPS:])
+            to_check = detail_ids[:MAX_DETAIL_LOOKUPS]
+            details_by_id, fatal, detail_error = await fetch_details_map(client, to_check)
+            details_note = None
+            details_available = True
+            if fatal:
+                details_available = False
+                details_by_id = {}
+                skipped_for_cap = set()
+                details_note = (
+                    "Place Details could not be used, so websites were checked from search results only. "
+                    f"Google said: {fatal[:180]}"
+                )
+                logger.error("Place Details unavailable for campaign %s: %s", campaign_id, fatal[:300])
+            elif detail_error:
+                details_note = f"Some website checks failed. Last error: {detail_error[:180]}"
+
+            stats = select_leads(
+                found,
+                details_by_id,
+                seen_ids=seen_ids,
+                min_rating=req.min_rating,
+                min_reviews=getattr(req, "min_reviews", None),
+                max_reviews=getattr(req, "max_reviews", None),
+                center=(lat, lng),
+                radius_m=radius,
+                details_available=details_available,
+                skipped_for_cap=skipped_for_cap,
+            )
+            leads = [lead_from_place(campaign_id, place) for place in stats.kept]
+            saved = await _save_leads(db, leads)
+
+            campaign.total_leads = saved
+            campaign.status_detail = summarize_search(
+                saved, stats, errors, truncated, area_label or req.location, details_note
+            )
+            if not found and errors:
+                campaign.status = CampaignStatus.FAILED.value
+                logger.error("Campaign %s failed: %s", campaign_id, campaign.status_detail)
+            else:
+                campaign.status = CampaignStatus.COMPLETED.value
+                logger.info("Campaign %s finished: %s", campaign_id, campaign.status_detail)
+            await db.commit()
+
+
+async def run_grid_search(campaign_id: int, req):
+    try:
+        await _execute(campaign_id, req)
+    except Exception as exc:
+        logger.exception("Campaign %s crashed", campaign_id)
+        await _mark_failed(campaign_id, f"Search stopped: {exc}"[:500])
+    try:
+        await generate_emails_for_campaign(campaign_id)
+    except Exception:
+        logger.exception("Draft generation failed for campaign %s", campaign_id)

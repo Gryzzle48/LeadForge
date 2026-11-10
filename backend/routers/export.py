@@ -1,8 +1,8 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
 from ..database import get_session
-from ..workers.sheet_exporter import export_to_sheets
+from ..workers.sheet_exporter import SheetExportError, export_to_sheets
 from ..auth import client_ip_key
 
 router = APIRouter()
@@ -15,5 +15,7 @@ async def export_campaign(
     campaign_id: int,
     db: AsyncSession = Depends(get_session),
 ):
-    sheet_url = await export_to_sheets(campaign_id, db)
-    return {"sheet_url": sheet_url}
+    try:
+        return await export_to_sheets(campaign_id, db)
+    except SheetExportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc

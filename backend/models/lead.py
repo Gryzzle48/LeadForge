@@ -16,6 +16,7 @@ class Lead(Base):
     rating = Column(Float, nullable=True)
     review_count = Column(Integer, nullable=True)
     website_uri = Column(String(500), nullable=True)
+    maps_url = Column(Text, nullable=True)
     has_website = Column(Boolean, default=False)
     email_subject = Column(Text, nullable=True)
     email_body = Column(Text, nullable=True)
@@ -36,6 +37,11 @@ class Lead(Base):
             "category": self.category,
             "rating": self.rating,
             "review_count": self.review_count,
+            "website_uri": self.website_uri,
+            "maps_url": self.maps_url or (
+                f"https://www.google.com/maps/search/?api=1&query_place_id={self.place_id}"
+                if self.place_id else None
+            ),
             "has_website": self.has_website,
             "email_subject": self.email_subject,
             "email_body": self.email_body,

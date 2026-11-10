@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
 from ..database import get_session
@@ -11,12 +11,32 @@ router = APIRouter()
 limiter = Limiter(key_func=client_ip_key)
 
 class SearchRequest(BaseModel):
-    query: str
-    location: str
-    lat: float | None = None
-    lng: float | None = None
-    radius: int = Field(default=50000, ge=100)
-    min_rating: float | None = None
+    query: str = Field(min_length=1, max_length=200)
+    location: str = Field(min_length=1, max_length=200)
+    lat: float | None = Field(default=None, ge=-90, le=90)
+    lng: float | None = Field(default=None, ge=-180, le=180)
+    radius: int = Field(default=10000, ge=100, le=50000)
+    min_rating: float | None = Field(default=None, ge=0, le=5)
+    min_reviews: int | None = Field(default=None, ge=0, le=1_000_000)
+    max_reviews: int | None = Field(default=None, ge=0, le=1_000_000)
+
+    @field_validator("query", "location")
+    @classmethod
+    def strip_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("must not be blank")
+        return text
+
+    @model_validator(mode="after")
+    def reviews_in_order(self):
+        if (
+            self.min_reviews is not None
+            and self.max_reviews is not None
+            and self.min_reviews > self.max_reviews
+        ):
+            raise ValueError("min_reviews cannot be greater than max_reviews")
+        return self
 
 @router.post("/search")
 @limiter.limit("5/minute")
@@ -33,13 +53,15 @@ async def create_search(
         lng=req.lng,
         radius=req.radius,
         min_rating=req.min_rating,
+        min_reviews=req.min_reviews,
+        max_reviews=req.max_reviews,
         status=CampaignStatus.PENDING.value,
     )
     db.add(campaign)
     await db.commit()
     await db.refresh(campaign)
 
-    background_tasks.add_task(run_grid_search, campaign.id, req, db)
+    background_tasks.add_task(run_grid_search, campaign.id, req)
 
     return {"campaign_id": campaign.id, "status": campaign.status}
 

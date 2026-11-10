@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { Search, MapPin, SlidersHorizontal, Loader2, Target } from 'lucide-react';
-import { apiFetch } from '../lib/api';
+import { apiFetch, errorMessage, readBody } from '../lib/api';
 import toast from 'react-hot-toast';
 
 interface SearchFormProps {
@@ -11,13 +11,25 @@ interface SearchFormProps {
 export default function SearchForm({ onStart }: SearchFormProps) {
   const [query, setQuery] = useState('');
   const [location, setLocation] = useState('');
-  const [radius, setRadius] = useState(50000);
+  const [radius, setRadius] = useState(10000);
   const [minRating, setMinRating] = useState('');
+  const [minReviews, setMinReviews] = useState('');
+  const [maxReviews, setMaxReviews] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query || !location) return;
+    const minReviewCount = minReviews === '' ? null : Number(minReviews);
+    const maxReviewCount = maxReviews === '' ? null : Number(maxReviews);
+    if ((minReviewCount !== null && Number.isNaN(minReviewCount)) || (maxReviewCount !== null && Number.isNaN(maxReviewCount))) {
+      toast.error('Review filters must be whole numbers.');
+      return;
+    }
+    if (minReviewCount !== null && maxReviewCount !== null && minReviewCount > maxReviewCount) {
+      toast.error('Min reviews cannot be greater than max reviews.');
+      return;
+    }
     setLoading(true);
     try {
       const res = await apiFetch('/api/search', {
@@ -28,10 +40,16 @@ export default function SearchForm({ onStart }: SearchFormProps) {
           location,
           radius,
           min_rating: minRating ? parseFloat(minRating) : null,
+          min_reviews: minReviewCount,
+          max_reviews: maxReviewCount,
         }),
       });
-      const data = await res.json();
-      onStart(data);
+      const data = await readBody(res);
+      if (!res.ok || !data || typeof data !== 'object' || !('campaign_id' in data)) {
+        toast.error(errorMessage(data, 'Search did not start. Check the backend URL and API key.'));
+        return;
+      }
+      onStart(data as { campaign_id: number; status: string });
     } catch (err) {
       console.error(err);
       toast.error('Search failed. Check your API key and try again.');
@@ -120,6 +138,32 @@ export default function SearchForm({ onStart }: SearchFormProps) {
             placeholder="e.g. 4.0"
             value={minRating}
             onChange={(e) => setMinRating(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label className="input-label">Min. Reviews (optional)</label>
+          <input
+            className="input"
+            type="number"
+            min="0"
+            step="1"
+            placeholder="e.g. 5"
+            value={minReviews}
+            onChange={(e) => setMinReviews(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label className="input-label">Max. Reviews (optional)</label>
+          <input
+            className="input"
+            type="number"
+            min="0"
+            step="1"
+            placeholder="e.g. 200"
+            value={maxReviews}
+            onChange={(e) => setMaxReviews(e.target.value)}
           />
         </div>
       </div>

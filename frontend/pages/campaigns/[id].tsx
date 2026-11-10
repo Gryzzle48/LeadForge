@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Loader2, MapPin } from 'lucide-react';
 import ResultsTable from '../../components/ResultsTable';
 import StatusBadge from '../../components/StatusBadge';
-import { apiFetch } from '../../lib/api';
+import { apiFetch, errorMessage, readBody } from '../../lib/api';
 import toast from 'react-hot-toast';
 
 export default function CampaignPage() {
@@ -20,8 +20,14 @@ export default function CampaignPage() {
         apiFetch(`/api/search/${id}`),
         apiFetch(`/api/campaigns/${id}/leads`),
       ]);
-      setCampaign(await campRes.json());
-      setLeads(await leadsRes.json());
+      const campaignData = await readBody(campRes);
+      const leadsData = await readBody(leadsRes);
+      if (!campRes.ok) {
+        toast.error(errorMessage(campaignData, 'Failed to load campaign data'));
+      } else {
+        setCampaign(campaignData);
+      }
+      setLeads(Array.isArray(leadsData) ? leadsData : []);
     } catch (e) {
       console.error(e);
       toast.error('Failed to load campaign data');
@@ -66,6 +72,9 @@ export default function CampaignPage() {
               <MapPin className="w-3 h-3" />
               {campaign?.location}
             </p>
+            {campaign?.status_detail && (
+              <p className="text-xs text-muted mt-1 max-w-xl">{campaign.status_detail}</p>
+            )}
           </div>
         </div>
 

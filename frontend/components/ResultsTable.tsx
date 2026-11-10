@@ -9,6 +9,9 @@ interface Lead {
   id: number;
   name: string;
   category?: string;
+  address?: string;
+  maps_url?: string;
+  website_uri?: string;
   rating?: number;
   review_count?: number;
   phone?: string;
@@ -97,7 +100,7 @@ export default function ResultsTable({ leads, campaignId }: ResultsTableProps) {
           </div>
           <div>
             <h2 className="text-base font-semibold text-pearl">Leads</h2>
-            <p className="text-xs text-muted">{localLeads?.length || 0} businesses found</p>
+            <p className="text-xs text-muted">{localLeads?.length || 0} businesses with no website. Add an email in the sheet before creating a draft.</p>
           </div>
         </div>
       </div>
@@ -140,18 +143,31 @@ export default function ResultsTable({ leads, campaignId }: ResultsTableProps) {
                         : <ChevronDown className="w-3.5 h-3.5" />}
                     </button>
                   </td>
-                  <td className="font-medium">{lead.name}</td>
+                  <td className="font-medium">
+                    <div>{lead.name}</div>
+                    {lead.address && (
+                      <div className="text-xs text-muted font-normal mt-0.5 max-w-xs">{lead.address}</div>
+                    )}
+                    <div className="text-[11px] mt-0.5">
+                      {lead.maps_url ? (
+                        <a href={lead.maps_url} target="_blank" rel="noopener noreferrer" className="text-frost hover:underline">Map</a>
+                      ) : null}
+                      <span className="text-muted">{lead.maps_url ? ' · ' : ''}No website</span>
+                    </div>
+                  </td>
                   <td>
                     <span className="text-xs text-muted bg-shadow/50 px-2 py-1 rounded-md">
                       {lead.category || '—'}
                     </span>
                   </td>
                   <td>
-                    {lead.rating ? (
+                    {lead.rating != null ? (
                       <span className="flex items-center gap-1 text-amber-400 text-sm">
                         <Star className="w-3.5 h-3.5 fill-current" />
                         {lead.rating}
-                        <span className="text-muted text-xs ml-1">({lead.review_count})</span>
+                        {lead.review_count != null && (
+                          <span className="text-muted text-xs ml-1">({lead.review_count})</span>
+                        )}
                       </span>
                     ) : (
                       <span className="text-muted text-xs">—</span>

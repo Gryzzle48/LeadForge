@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Float, Enum as SAEnum
+from sqlalchemy import Column, Integer, String, DateTime, Float, Text, Enum as SAEnum
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.sql import func
@@ -23,7 +23,11 @@ class Campaign(Base):
     lng = Column(Float, nullable=True)
     radius = Column(Integer, default=50000)
     min_rating = Column(Float, nullable=True)
+    min_reviews = Column(Integer, nullable=True)
+    max_reviews = Column(Integer, nullable=True)
     status = Column(String(20), default=CampaignStatus.PENDING.value)
+    status_detail = Column(Text, nullable=True)
+    sheet_url = Column(String(500), nullable=True)
     total_leads = Column(Integer, default=0)
     emailed_leads = Column(Integer, default=0)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
@@ -38,7 +42,11 @@ class Campaign(Base):
             "lng": self.lng,
             "radius": self.radius,
             "min_rating": self.min_rating,
+            "min_reviews": self.min_reviews,
+            "max_reviews": self.max_reviews,
             "status": self.status,
+            "status_detail": self.status_detail,
+            "sheet_url": self.sheet_url,
             "total_leads": self.total_leads,
             "emailed_leads": self.emailed_leads,
             "created_at": str(self.created_at) if self.created_at else None,

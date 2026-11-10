@@ -19,6 +19,16 @@ limiter = Limiter(key_func=client_ip_key)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    try:
+        async with async_session() as db:
+            await db.execute(text(
+                "UPDATE campaigns SET status = 'failed', "
+                "status_detail = 'Search was interrupted when the server restarted. Run it again.' "
+                "WHERE status IN ('pending', 'running')"
+            ))
+            await db.commit()
+    except Exception as exc:
+        logger.warning(f"Could not mark interrupted searches: {exc}")
     yield
 
 app = FastAPI(title="LeadForge", lifespan=lifespan)

@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Loader2, Upload, FileSpreadsheet, CheckCircle2 } from 'lucide-react';
 import ScriptDisplay from '../../components/ScriptDisplay';
 import StatusBadge from '../../components/StatusBadge';
-import { apiFetch } from '../../lib/api';
+import { apiFetch, errorMessage, readBody } from '../../lib/api';
 import toast from 'react-hot-toast';
 import { motion } from 'framer-motion';
 
@@ -13,6 +13,7 @@ export default function ExportPage() {
   const [campaign, setCampaign] = useState(null);
   const [leads, setLeads] = useState([]);
   const [sheetUrl, setSheetUrl] = useState(null);
+  const [warning, setWarning] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -23,8 +24,10 @@ export default function ExportPage() {
         apiFetch(`/api/search/${id}`),
         apiFetch(`/api/campaigns/${id}/leads`),
       ]);
-      setCampaign(await campRes.json());
-      setLeads(await leadsRes.json());
+      const campaignData = await readBody(campRes);
+      const leadsData = await readBody(leadsRes);
+      if (campRes.ok) setCampaign(campaignData);
+      setLeads(Array.isArray(leadsData) ? leadsData : []);
     } catch (e) {
       console.error(e);
     } finally {
@@ -38,13 +41,15 @@ export default function ExportPage() {
     setExporting(true);
     try {
       const res = await apiFetch(`/api/campaigns/${id}/export`, { method: 'POST' });
-      const data = await res.json();
-      if (data.sheet_url) {
-        setSheetUrl(data.sheet_url);
-        toast.success('Sheet created!');
-      } else {
-        toast.error('Export failed');
+      const data = await readBody(res) as { sheet_url?: string; warning?: string; detail?: unknown };
+      const url = data?.sheet_url;
+      if (!res.ok || typeof url !== 'string' || !url.startsWith('https://')) {
+        toast.error(errorMessage(data, 'Export failed'));
+        return;
       }
+      setSheetUrl(url);
+      setWarning(data.warning || null);
+      toast.success('Sheet created');
     } catch {
       toast.error('Export failed');
     } finally {
@@ -86,7 +91,7 @@ export default function ExportPage() {
           </div>
           <h2 className="text-xl font-bold text-pearl mb-2">Ready for Export</h2>
           <p className="text-sm text-muted max-w-sm mx-auto mb-8">
-            Create a Google Sheet with all {leads.length} leads and their generated emails. Then paste the Apps Script to automate sending.
+            Create a Google Sheet with names, phones, addresses, Maps links, ratings, and draft emails. Google does not provide email addresses, so you fill those in before making drafts. Nothing is sent automatically.
           </p>
 
           <div className="flex flex-col items-center gap-3">
@@ -111,6 +116,9 @@ export default function ExportPage() {
         </motion.div>
       ) : (
         <>
+          {warning && (
+            <div className="glass-panel p-4 border-danger/30 text-sm text-pearl">{warning}</div>
+          )}
           <ScriptDisplay sheetUrl={sheetUrl} />
         </>
       )}
