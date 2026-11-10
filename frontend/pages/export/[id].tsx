@@ -91,7 +91,7 @@ export default function ExportPage() {
           </div>
           <h2 className="text-xl font-bold text-pearl mb-2">Ready for Export</h2>
           <p className="text-sm text-muted max-w-sm mx-auto mb-8">
-            Create a Google Sheet with names, phones, addresses, Maps links, ratings, and draft emails. Google does not provide email addresses, so you fill those in before making drafts. Nothing is sent automatically.
+            Add these leads to your Google Sheet. The columns are #, Name, Category, Google Maps, and Contacts. Draft emails stay in LeadForge. Nothing is sent automatically.
           </p>
 
           <div className="flex flex-col items-center gap-3">

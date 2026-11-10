@@ -6,7 +6,7 @@ Find local businesses that have **no website**, save them to a Google Sheet, and
 
 </div>
 
-LeadForge searches with a [gosom Google Maps scraper](https://github.com/gosom/google-maps-scraper) you run yourself. It does not call the paid Google Places API. You pick a business type and a city. The scraper reads Google Maps. LeadForge drops businesses that already list their own website and writes the rest to a spreadsheet: name, category, address, phone, Maps link, rating, and review count, plus a draft email. Nothing is emailed automatically.
+LeadForge searches with a [gosom Google Maps scraper](https://github.com/gosom/google-maps-scraper) you run yourself. It does not call the paid Google Places API. You pick a business type and a city. The scraper reads Google Maps. LeadForge drops businesses that already list their own website and writes the rest to a spreadsheet with five columns: `#`, Name, Category, Google Maps, and Contacts. Draft emails stay in the app. Nothing is emailed automatically.
 
 A blank website, a Maps link, or a social profile (Facebook, Instagram, and similar) counts as no website, because the scraper has already opened the place page.
 
@@ -72,7 +72,9 @@ cp backend/.env.example backend/.env
 | `API_KEY` | No | If set, every API call except `/api/health` must send it as `X-API-Key` |
 | `CORS_ORIGINS` | No | Comma-separated sites, if something calls the API directly |
 
-Optional Google Sheets export (no Maps or search API key required). If `GOOGLE_SPREADSHEET_ID` is set, each export appends new rows to that tab and skips businesses already listed (same place id, Maps link, or name and phone). The header row is written when the tab is empty. If the spreadsheet id is empty, LeadForge can still create a new spreadsheet. Set `GOOGLE_SHEET_SHARE_EMAIL` only for that fallback, so the new file is shared with you.
+Optional Google Sheets export (no Maps or search API key required). If `GOOGLE_SPREADSHEET_ID` is set, each export appends new rows to that tab. The columns are exactly `#`, Name, Category, Google Maps, and Contacts. `#` keeps counting from the last row already on the sheet. A business already listed (same Maps link, or the same name and contacts when there is no link) is skipped. Contacts puts phone, email, and a social link such as Facebook or Instagram on separate lines. Draft text stays in LeadForge, not in the sheet.
+
+The tab is written only when it is empty or its header is already those five names in that order. If the tab has an older header, it is left unchanged and the rows go to a tab named `{that name} (LeadForge)` instead. If that tab also has a different header, the export stops and asks you to set `GOOGLE_SHEET_TAB_NAME` to a new empty tab. If the spreadsheet id is empty, LeadForge can still create a new spreadsheet. Set `GOOGLE_SHEET_SHARE_EMAIL` only for that fallback, so the new file is shared with you.
 
 `backend/.env` is loaded even if you start the server from the project root. Do not commit it.
 
@@ -116,7 +118,7 @@ If the scraper is down or blocked, the search is marked failed and the page show
 
 ## Sending mail
 
-The sheet usually has no email address. Type one into the Email column, then optionally paste `scripts/apps_script.gs` into Extensions → Apps Script and run `createDrafts`. That creates Gmail drafts. You send them yourself. The script does not send mail and does not install a timer.
+Draft emails stay on the lead in LeadForge. The sheet is only the contact list, so there is no email or draft column to send from. Copy a contact from the sheet and send the draft yourself.
 
 ## Checks
 
