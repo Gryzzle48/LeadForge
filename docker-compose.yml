@@ -11,7 +11,7 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   maps-scraper:
-    image: gosom/google-maps-scraper:latest
+    image: gosom/google-maps-scraper:v1.18.2
     command: ["-web", "-data-folder", "/gmapsdata", "-addr", ":8080", "-c", "1"]
     environment:
       DISABLE_TELEMETRY: "1"
