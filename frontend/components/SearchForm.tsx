@@ -6,9 +6,10 @@ import toast from 'react-hot-toast';
 
 interface SearchFormProps {
   onStart: (data: { campaign_id: number; status: string }) => void;
+  disabled?: boolean;
 }
 
-export default function SearchForm({ onStart }: SearchFormProps) {
+export default function SearchForm({ onStart, disabled = false }: SearchFormProps) {
   const [query, setQuery] = useState('');
   const [locationScope, setLocationScope] = useState<'city' | 'region'>('city');
   const [city, setCity] = useState('');
@@ -18,6 +19,7 @@ export default function SearchForm({ onStart }: SearchFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading || disabled) return;
     if (!query.trim() || !state.trim() || (locationScope === 'city' && !city.trim())) {
       toast.error(locationScope === 'city'
         ? 'Enter a business category, city and state.'
@@ -181,14 +183,14 @@ export default function SearchForm({ onStart }: SearchFormProps) {
 
       <motion.button
         type="submit"
-        disabled={loading}
+        disabled={loading || disabled}
         className="btn-primary w-full mt-6 py-3 text-base"
         whileTap={{ scale: 0.98 }}
       >
-        {loading ? (
+        {loading || disabled ? (
           <>
             <Loader2 className="w-4 h-4 animate-spin" />
-            Searching...
+            {loading ? 'Starting search...' : 'Search in progress...'}
           </>
         ) : (
           <>
