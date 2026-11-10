@@ -179,7 +179,10 @@ async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
 
         try:
             max_results = min(int(req.max_results), MAX_RESULTS_PER_QUERY)
-            keyword = f"{req.query} in {campaign.city}, {campaign.state}, United States"
+            search_location = campaign.location or ", ".join(
+                part for part in [campaign.city, campaign.state, campaign.country] if part
+            )
+            keyword = f"{req.query} in {search_location}"
             timeout = aiohttp.ClientTimeout(
                 total=SCRAPER_TIMEOUT_SECONDS + 30,
                 connect=10,
@@ -188,7 +191,7 @@ async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 scraped_rows = await _run_scraper_query(
                     session,
-                    query_name=f"{req.query} - {campaign.city}, {campaign.state}",
+                    query_name=f"{req.query} - {search_location}",
                     keyword=keyword,
                 )
 
