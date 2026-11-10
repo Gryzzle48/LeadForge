@@ -1,5 +1,3 @@
-version: '3.9'
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -12,5 +10,17 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  maps-scraper:
+    image: gosom/google-maps-scraper:latest
+    command: ["-web", "-data-folder", "/gmapsdata", "-addr", ":8080", "-c", "1"]
+    environment:
+      DISABLE_TELEMETRY: "1"
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - maps_scraper_data:/gmapsdata
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  maps_scraper_data:
