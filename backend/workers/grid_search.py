@@ -1,110 +1,170 @@
 import asyncio
-import aiohttp
-import math
+import csv
+import hashlib
+import io
 import logging
+
+import aiohttp
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..config import MAPS_SCRAPER_API_URL, MAX_RESULTS_PER_QUERY
 from ..database import async_session
 from ..models.campaign import Campaign, CampaignStatus
 from ..models.lead import Lead
-from ..config import GOOGLE_MAPS_API_KEY, MAX_RESULTS_PER_QUERY, SEARCH_RADIUS_METERS, OVERLAP_FACTOR
 
 logger = logging.getLogger(__name__)
 
-PLACES_API_BASE = "https://places.googleapis.com/v1/places:searchText"
-GEOCODING_API_BASE = "https://maps.googleapis.com/maps/api/geocode/json"
-FIELDS_MASK = (
-    "places.id,places.displayName,places.formattedAddress,"
-    "places.internationalPhoneNumber,places.websiteUri,places.googleMapsUri,"
-    "places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount"
-)
+SCRAPER_TIMEOUT_SECONDS = 360
+SCRAPER_POLL_INTERVAL_SECONDS = 5
 
 
-def grid_circles(lat: float, lng: float, radius_m: int, step_m: int | None = None):
-    if step_m is None:
-        step_m = int(radius_m * OVERLAP_FACTOR)
-    circles = []
-    dlat = step_m / 111320
-    dlng = step_m / (111320 * abs(math.cos(math.radians(lat))) + 1e-6)
-    rlat = radius_m / 111320
-    rlng = radius_m / (111320 * abs(math.cos(math.radians(lat))) + 1e-6)
-    lat_start, lat_end = lat - rlat, lat + rlat
-    lng_start, lng_end = lng - rlng, lng + rlng
-    lat_c = lat_start
-    while lat_c <= lat_end:
-        lng_c = lng_start
-        while lng_c <= lng_end:
-            circles.append((round(lat_c, 6), round(lng_c, 6)))
-            lng_c += dlng
-        lat_c += dlat
-    return circles
-
-
-async def search_places(
-    session: aiohttp.ClientSession,
-    lat: float,
-    lng: float,
-    query: str,
-    radius: int,
-    min_rating: float | None = None,
-) -> tuple[list, bool]:
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
-        "X-Goog-FieldMask": FIELDS_MASK,
-    }
-    body = {
-        "textQuery": query,
-        "locationBias": {
-            "circle": {
-                "center": {"latitude": lat, "longitude": lng},
-                "radius": min(radius, SEARCH_RADIUS_METERS),
-            }
-        },
-        "pageSize": MAX_RESULTS_PER_QUERY,
-    }
-    if min_rating is not None:
-        body["minRating"] = min_rating
-
-    try:
-        async with session.post(PLACES_API_BASE, json=body, headers=headers) as resp:
-            if resp.status != 200:
-                response_text = await resp.text()
-                logger.error("Places API error %s at (%s,%s): %s", resp.status, lat, lng, response_text[:200])
-                return [], True
-            data = await resp.json()
-            return data.get("places", []), False
-    except asyncio.TimeoutError:
-        logger.warning("Places API timeout at (%s,%s)", lat, lng)
-        return [], True
-    except aiohttp.ClientError as exc:
-        logger.error("Places API request failed at (%s,%s): %s", lat, lng, exc)
-        return [], True
-    except Exception:
-        logger.exception("Unexpected error in search_places at (%s,%s)", lat, lng)
-        return [], True
-
-
-async def geocode_location(session: aiohttp.ClientSession, location: str) -> tuple[float, float] | None:
-    params = {"address": location, "key": GOOGLE_MAPS_API_KEY}
-    try:
-        async with session.get(GEOCODING_API_BASE, params=params) as resp:
-            if resp.status != 200:
-                logger.error("Geocoding API error %s for %r", resp.status, location)
-                return None
-            data = await resp.json()
-            if data.get("status") != "OK" or not data.get("results"):
-                logger.error("Geocoding failed for %r: %s", location, data.get("status"))
-                return None
-            loc = data["results"][0]["geometry"]["location"]
-            return loc["lat"], loc["lng"]
-    except Exception:
-        logger.exception("Geocoding exception for %r", location)
+def _split_emails(raw: str | None) -> str | None:
+    if not raw:
         return None
+    for candidate in raw.replace(";", ",").split(","):
+        value = candidate.strip().strip(" .;")
+        if "@" in value and "." in value.rsplit("@", 1)[-1]:
+            return value[:255]
+    return None
+
+
+def parse_scraper_csv(content: str) -> list[dict]:
+    """Parse the CSV emitted by gosom/google-maps-scraper."""
+    reader = csv.DictReader(io.StringIO(content))
+    rows: list[dict] = []
+    for row in reader:
+        name = (row.get("title") or row.get("name") or "").strip()
+        if not name:
+            continue
+        address = (row.get("address") or "").strip()
+        place_id = (row.get("place_id") or row.get("cid") or row.get("data_id") or "").strip()
+        if not place_id:
+            stable_key = "|".join((name.casefold(), address.casefold()))
+            place_id = "gosom:" + hashlib.sha256(stable_key.encode("utf-8")).hexdigest()
+
+        maps_url = (row.get("link") or "").strip()
+        if not maps_url and not place_id.startswith("gosom:"):
+            maps_url = (
+                "https://www.google.com/maps/search/?api=1&query_place_id="
+                + place_id
+            )
+
+        website = (row.get("website") or row.get("web_site") or "").strip()
+        category = (row.get("category") or "").strip()
+        phone = (row.get("phone") or "").strip()
+        rating_raw = (row.get("review_rating") or "").strip()
+        review_count_raw = (row.get("review_count") or "").strip()
+        try:
+            rating = float(rating_raw) if rating_raw else None
+        except ValueError:
+            rating = None
+        try:
+            review_count = int(float(review_count_raw)) if review_count_raw else None
+        except ValueError:
+            review_count = None
+
+        rows.append({
+            "place_id": place_id,
+            "name": name,
+            "address": address,
+            "phone": phone or None,
+            "email": _split_emails(row.get("emails")),
+            "instagram_url": None,
+            "google_maps_url": maps_url or None,
+            "category": category or None,
+            "rating": rating,
+            "review_count": review_count,
+            "website_uri": website or None,
+        })
+    return rows
+
+
+async def _run_scraper_query(
+    session: aiohttp.ClientSession,
+    query_name: str,
+    keyword: str,
+    max_results: int,
+) -> list[dict]:
+    # gosom's local web runner expects max_time in seconds. Its API converts
+    # that value to a Go duration internally.
+    depth = max(1, min(10, (max_results + 19) // 20))
+    payload = {
+        "Name": query_name,
+        "keywords": [keyword],
+        "lang": "en",
+        "zoom": 15,
+        "depth": depth,
+        "email": False,
+        "fast_mode": False,
+        "extra_reviews": False,
+        "radius": 50000,
+        "max_time": 300,
+    }
+
+    async with session.post(
+        f"{MAPS_SCRAPER_API_URL}/api/v1/jobs",
+        json=payload,
+    ) as response:
+        body = await response.text()
+        if response.status not in (200, 201, 202):
+            raise RuntimeError(
+                f"Local Maps scraper rejected the job (HTTP {response.status}): {body[:300]}"
+            )
+        try:
+            created = await asyncio.to_thread(__import__("json").loads, body)
+        except Exception as exc:
+            raise RuntimeError("Local Maps scraper returned an invalid job response.") from exc
+
+    job_id = str(created.get("id") or created.get("ID") or "").strip()
+    if not job_id:
+        raise RuntimeError("Local Maps scraper did not return a job ID.")
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + SCRAPER_TIMEOUT_SECONDS
+    status = "pending"
+    last_error = ""
+
+    while loop.time() < deadline:
+        async with session.get(f"{MAPS_SCRAPER_API_URL}/api/v1/jobs/{job_id}") as response:
+            body = await response.text()
+            if response.status != 200:
+                raise RuntimeError(
+                    f"Could not read local Maps scraper job (HTTP {response.status}): {body[:300]}"
+                )
+            try:
+                job = await asyncio.to_thread(__import__("json").loads, body)
+            except Exception as exc:
+                raise RuntimeError("Local Maps scraper returned invalid job status.") from exc
+
+        status = str(job.get("Status") or job.get("status") or "").lower()
+        last_error = str(job.get("Error") or job.get("error") or "")
+        if status in {"ok", "completed", "success"}:
+            break
+        if status in {"failed", "error"}:
+            raise RuntimeError(last_error or "Local Maps scraper job failed.")
+        await asyncio.sleep(SCRAPER_POLL_INTERVAL_SECONDS)
+    else:
+        raise RuntimeError(
+            "Local Maps scraper timed out. Check its Docker logs and try a smaller search."
+        )
+
+    async with session.get(
+        f"{MAPS_SCRAPER_API_URL}/api/v1/jobs/{job_id}/download"
+    ) as response:
+        if response.status != 200:
+            body = await response.text()
+            raise RuntimeError(
+                f"Could not download Maps scraper results (HTTP {response.status}): {body[:300]}"
+            )
+        csv_content = await response.text()
+
+    return parse_scraper_csv(csv_content)[:max_results]
 
 
 async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
+    """Run one local gosom scrape and persist only businesses without a listed website."""
     async with async_session() as db:
         result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
         campaign = result.scalar_one_or_none()
@@ -114,98 +174,74 @@ async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
         campaign.status = CampaignStatus.RUNNING.value
         await db.commit()
 
-        lat, lng = req.lat, req.lng
-        radius = req.radius or 50000
-        location = req.location or campaign.location
+        try:
+            max_results = min(int(req.max_results), MAX_RESULTS_PER_QUERY)
+            keyword = f"{req.query} in {campaign.city}, {campaign.state}, United States"
+            timeout = aiohttp.ClientTimeout(
+                total=SCRAPER_TIMEOUT_SECONDS + 30,
+                connect=10,
+                sock_read=SCRAPER_TIMEOUT_SECONDS + 30,
+            )
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                scraped_rows = await _run_scraper_query(
+                    session,
+                    query_name=f"{req.query} - {campaign.city}, {campaign.state}",
+                    keyword=keyword,
+                    max_results=max_results,
+                )
 
-        if lat is None or lng is None:
-            timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as geo_session:
-                coords = await geocode_location(geo_session, location)
-            if not coords:
-                campaign.status = CampaignStatus.FAILED.value
-                await db.commit()
-                logger.error("Campaign %s stopped: could not geocode %r", campaign_id, location)
-                return
-            lat, lng = coords
-            campaign.lat, campaign.lng = lat, lng
-            await db.commit()
+            existing_result = await db.execute(select(Lead.place_id))
+            seen_place_ids = {row[0] for row in existing_result if row[0]}
+            added_count = 0
 
-        centers = grid_circles(lat, lng, radius)
-        existing_result = await db.execute(select(Lead.place_id))
-        seen_place_ids = {row[0] for row in existing_result if row[0]}
-
-        total_errors = 0
-        total_attempts = 0
-        added_count = 0
-        target_count = req.max_results
-
-        timeout = aiohttp.ClientTimeout(total=35)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            batch_size = 5
-            for offset in range(0, len(centers), batch_size):
-                if added_count >= target_count:
+            for place in scraped_rows:
+                if added_count >= max_results:
                     break
 
-                batch = centers[offset:offset + batch_size]
-                results = await asyncio.gather(*[
-                    search_places(session, clat, clng, req.query, radius, req.min_rating)
-                    for clat, clng in batch
-                ])
+                # A business with a website listed on its Maps profile is not
+                # part of this workflow. We still parse the field to filter it.
+                if place.get("website_uri"):
+                    continue
 
-                for places, is_error in results:
-                    total_attempts += 1
-                    if is_error:
-                        total_errors += 1
-                        continue
+                place_id = place["place_id"]
+                if place_id in seen_place_ids:
+                    continue
+                seen_place_ids.add(place_id)
 
-                    for place in places:
-                        if added_count >= target_count:
-                            break
+                rating = place.get("rating")
+                if req.min_rating is not None and rating is not None and rating < req.min_rating:
+                    continue
 
-                        place_id = place.get("id")
-                        if not place_id or place_id in seen_place_ids:
-                            continue
-                        seen_place_ids.add(place_id)
+                statement = pg_insert(Lead).values(
+                    campaign_id=campaign_id,
+                    place_id=place_id,
+                    name=place["name"],
+                    address=place.get("address") or "",
+                    phone=place.get("phone"),
+                    email=place.get("email"),
+                    instagram_url=None,
+                    google_maps_url=place.get("google_maps_url"),
+                    category=place.get("category") or campaign.query,
+                    rating=rating,
+                    review_count=place.get("review_count"),
+                    website_uri=None,
+                    has_website=False,
+                    email_status="no_email" if not place.get("email") else "draft",
+                ).on_conflict_do_nothing(index_elements=[Lead.place_id])
+                insert_result = await db.execute(statement)
+                if insert_result.rowcount:
+                    added_count += 1
 
-                        website = (place.get("websiteUri") or "").strip()
-                        if website:
-                            continue
-
-                        name = (place.get("displayName") or {}).get("text") or "Unknown"
-                        type_display = place.get("primaryTypeDisplayName") or {}
-                        category = type_display.get("text") or place.get("primaryType") or req.query
-                        maps_url = place.get("googleMapsUri") or (
-                            "https://www.google.com/maps/search/?api=1&query_place_id=" + place_id
-                        )
-
-                        statement = pg_insert(Lead).values(
-                            campaign_id=campaign_id,
-                            place_id=place_id,
-                            name=name,
-                            address=place.get("formattedAddress") or "",
-                            phone=place.get("internationalPhoneNumber") or "",
-                            email=None,
-                            instagram_url=None,
-                            google_maps_url=maps_url,
-                            category=category,
-                            rating=place.get("rating"),
-                            review_count=place.get("userRatingCount"),
-                            website_uri=None,
-                            has_website=False,
-                            email_status="no_email",
-                        ).on_conflict_do_nothing(index_elements=[Lead.place_id])
-                        insert_result = await db.execute(statement)
-                        if insert_result.rowcount:
-                            added_count += 1
-
-                await db.commit()
-
-        campaign.total_leads = added_count
-        if total_attempts > 0 and total_errors == total_attempts:
-            campaign.status = CampaignStatus.FAILED.value
-            logger.error("Campaign %s: all %s Places API calls failed", campaign_id, total_errors)
-        else:
+            campaign.total_leads = added_count
             campaign.status = CampaignStatus.COMPLETED.value
-            logger.info("Campaign %s completed with %s new leads", campaign_id, added_count)
-        await db.commit()
+            await db.commit()
+            logger.info(
+                "Campaign %s completed with %s new leads from local Maps scraper",
+                campaign_id,
+                added_count,
+            )
+        except Exception as exc:
+            logger.exception("Local Maps scraper failed for campaign %s", campaign_id)
+            campaign.status = CampaignStatus.FAILED.value
+            await db.commit()
+            logger.error("Campaign %s failed: %s", campaign_id, exc)
