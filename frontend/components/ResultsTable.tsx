@@ -103,7 +103,6 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
 
         setEnrichingIds((current) => current.includes(lead.id) ? current : [...current, lead.id]);
         let foundNewContact = false;
-        let failed = false;
 
         try {
           const response = await apiFetch('/api/leads/' + lead.id + '/enrich', { method: 'POST' });
@@ -122,7 +121,6 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
           if (foundNewContact) foundCount += 1;
           setLocalLeads((current) => current.map((item) => item.id === lead.id ? payload : item));
         } catch (error: any) {
-          failed = true;
           const message = error instanceof Error ? error.message : 'Contact search failed';
           const providerStopped =
             error?.status === 429 ||
