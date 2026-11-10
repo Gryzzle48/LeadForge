@@ -76,8 +76,8 @@ export default function ScriptDisplay({ sheetUrl }: ScriptDisplayProps) {
               <FileCode className="w-4.5 h-4.5 text-frost" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-pearl">Draft script</h2>
-              <p className="text-xs text-muted">Optional. Creates Gmail drafts. It does not send them.</p>
+              <h2 className="text-base font-semibold text-pearl">Sheet columns</h2>
+              <p className="text-xs text-muted">A contact list only. Drafts stay in LeadForge.</p>
             </div>
           </div>
           <motion.button
@@ -107,16 +107,15 @@ export default function ScriptDisplay({ sheetUrl }: ScriptDisplayProps) {
       <div className="glass-panel-light p-5">
         <h3 className="text-sm font-semibold text-pearl mb-3 flex items-center gap-2">
           <Terminal className="w-4 h-4 text-ember" />
-          Make drafts, then send them yourself
+          What the sheet contains
         </h3>
         <ol className="space-y-2 text-sm text-muted">
           {[
-            'Open the Google Sheet and type each business email into the Email column. Google does not provide these.',
-            'Go to Extensions → Apps Script',
-            'Delete the sample code and paste this script',
-            'Change SENDER_NAME to your name and save',
-            'Run createDrafts. If Google asks, allow it to create drafts.',
-            'Open Gmail → Drafts, read each one, and send it yourself. This script never sends mail.',
+            'Columns, in order: #, Name, Category, Google Maps, Contacts.',
+            '# keeps counting from the last row already on the sheet.',
+            'Contacts lists phone, email, and a social link such as Facebook or Instagram, each on its own line.',
+            'Draft emails stay on the lead in LeadForge. The sheet does not send mail.',
+            'If the tab already has a different header, it is left alone and rows go to a tab named "(LeadForge)".',
           ].map((step, i) => (
             <li key={i} className="flex items-start gap-3">
               <span className="w-5 h-5 rounded-full bg-ember/10 text-ember text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">

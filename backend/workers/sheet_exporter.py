@@ -3,6 +3,8 @@ import base64
 import json
 import logging
 import os
+import re
+from urllib.parse import parse_qs, urlparse
 
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -25,46 +27,8 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive.file",
 ]
 
-HEADERS = [
-    "Name",
-    "Category",
-    "Address",
-    "Phone",
-    "Maps link",
-    "Rating",
-    "Reviews",
-    "Website",
-    "Email",
-    "Subject",
-    "Draft",
-    "Status",
-    "Notes",
-    "Place ID",
-]
-
-# Header label -> field on a lead record. Extra labels cover older sheets.
-_HEADER_FIELDS = {
-    "name": "name",
-    "business": "name",
-    "category": "category",
-    "address": "address",
-    "phone": "phone",
-    "maps link": "maps",
-    "map": "maps",
-    "maps": "maps",
-    "rating": "rating",
-    "reviews": "reviews",
-    "review count": "reviews",
-    "website": "website",
-    "email": "email",
-    "subject": "subject",
-    "draft": "draft",
-    "body": "draft",
-    "status": "status",
-    "notes": "notes",
-    "place id": "place_id",
-    "place_id": "place_id",
-}
+HEADERS = ["#", "Name", "Category", "Google Maps", "Contacts"]
+TAB_SUFFIX = " (LeadForge)"
 
 
 class SheetExportError(Exception):
@@ -136,73 +100,117 @@ def maps_url_for(place_id: str | None, maps_url: str | None = None) -> str:
     return f"https://www.google.com/maps/search/?api=1&query_place_id={place_id}"
 
 
+def _is_maps_link(url: str) -> bool:
+    lowered = (url or "").strip().lower()
+    return any(marker in lowered for marker in (
+        "google.com/maps", "maps.google.", "goo.gl/maps", "maps.app.goo.gl",
+    ))
+
+
+def contacts_text(phone: str = "", email: str = "", extra: str = "") -> str:
+    """Phone, email, and a social or other link, one per line. Blanks are left out."""
+    parts = []
+    seen = set()
+    for value in (phone, email, extra):
+        text = str(value or "").strip()
+        if not text or _is_maps_link(text):
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        parts.append(text)
+    return "\n".join(parts)
+
+
+def maps_identity(url: str) -> str:
+    """Stable key for a Maps link. Place id or cid when the URL has one."""
+    text = (url or "").strip()
+    if not text:
+        return ""
+    candidate = text if "://" in text else "https://" + text
+    try:
+        parsed = urlparse(candidate)
+    except ValueError:
+        return "url:" + text.lower().rstrip("/")
+    query = parse_qs(parsed.query)
+    for key in ("query_place_id", "place_id"):
+        values = query.get(key) or []
+        if values and str(values[0]).strip():
+            return "place:" + str(values[0]).strip()
+    cid_values = query.get("cid") or []
+    if cid_values and str(cid_values[0]).strip():
+        return "cid:" + str(cid_values[0]).strip()
+    place = re.search(r"(ChIJ[A-Za-z0-9_-]+)", text)
+    if place:
+        return "place:" + place.group(1)
+    cid = re.search(r"(?:[?&]cid=|!1s)(\d{5,})", text)
+    if cid:
+        return "cid:" + cid.group(1)
+    host = parsed.netloc.lower().removeprefix("www.")
+    path = parsed.path.rstrip("/")
+    tail = f"{host}{path}"
+    if parsed.query:
+        tail += "?" + parsed.query
+    return "url:" + tail.lower()
+
+
+def _squash(value: str) -> str:
+    return " ".join(str(value or "").lower().split())
+
+
+def row_identity(name: str, maps: str, contacts: str) -> set[str]:
+    ident = maps_identity(maps)
+    if ident:
+        return {"map:" + ident}
+    fallback = _squash(name) + "|" + _squash(contacts.replace("\n", " "))
+    if fallback != "|":
+        return {"nc:" + fallback}
+    return set()
+
+
 def lead_fields(lead) -> dict:
-    rating = getattr(lead, "rating", None)
-    reviews = getattr(lead, "review_count", None)
+    extra = getattr(lead, "website_uri", None) or ""
     return {
         "name": lead.name or "",
         "category": lead.category or "",
-        "address": lead.address or "",
-        "phone": lead.phone or "",
         "maps": maps_url_for(getattr(lead, "place_id", None), getattr(lead, "maps_url", None)),
-        "rating": "" if rating is None else rating,
-        "reviews": "" if reviews is None else reviews,
-        "website": getattr(lead, "website_uri", None) or "",
+        "phone": lead.phone or "",
         "email": lead.email or "",
-        "subject": lead.email_subject or "",
-        "draft": lead.email_body or "",
-        "status": lead.email_status or "draft",
-        "notes": "",
-        "place_id": getattr(lead, "place_id", None) or "",
+        "extra": extra,
     }
 
 
-def lead_row(lead) -> list:
-    fields = lead_fields(lead)
-    return [fields[_HEADER_FIELDS[header.lower()]] for header in HEADERS]
+def lead_row(lead, number: int) -> list:
+    fields = lead_fields(lead) if not isinstance(lead, dict) else lead
+    contacts = contacts_text(fields.get("phone", ""), fields.get("email", ""), fields.get("extra", ""))
+    return [number, fields.get("name") or "", fields.get("category") or "", fields.get("maps") or "", contacts]
 
 
-def _header_field(cell) -> str | None:
-    return _HEADER_FIELDS.get(str(cell or "").strip().lower())
+def header_matches(row) -> bool:
+    cells = [str(cell).strip() for cell in row]
+    while cells and cells[-1] == "":
+        cells.pop()
+    return cells == HEADERS
 
 
-def _looks_like_header(row) -> bool:
-    return any(_header_field(cell) for cell in row)
+def next_row_number(existing_values: list[list]) -> int:
+    if len(existing_values) <= 1:
+        return 1
+    last = existing_values[-1]
+    if last:
+        try:
+            return int(float(str(last[0]).strip())) + 1
+        except (TypeError, ValueError):
+            pass
+    return len(existing_values)
 
 
-def _extend_header(header: list[str]) -> list[str]:
-    present = {_header_field(cell) for cell in header}
-    extended = list(header)
-    for label in HEADERS:
-        field = _HEADER_FIELDS[label.lower()]
-        if field not in present:
-            extended.append(label)
-            present.add(field)
-    return extended
-
-
-def project_row(header: list[str], fields: dict) -> list:
-    row = []
-    for cell in header:
-        field = _header_field(cell)
-        row.append("" if field is None else fields.get(field, ""))
-    return row
-
-
-def _identity_keys(header: list[str], row: list) -> set[str]:
-    values = {}
-    for cell, value in zip(header, row):
-        field = _header_field(cell)
-        if field:
-            values[field] = str(value or "").strip().lower()
-    keys = set()
-    if values.get("place_id"):
-        keys.add("id:" + values["place_id"])
-    if values.get("maps"):
-        keys.add("map:" + values["maps"])
-    if values.get("name") and values.get("phone"):
-        keys.add(f"np:{values['name']}|{values['phone']}")
-    return keys
+def alternate_tab_name(tab: str) -> str:
+    suffix = TAB_SUFFIX
+    base = tab[:-len(suffix)] if tab.endswith(suffix) else tab
+    name = f"{base}{suffix}"
+    return name[:100]
 
 
 def tab_range(tab: str, a1: str) -> str:
@@ -213,37 +221,36 @@ def tab_range(tab: str, a1: str) -> str:
 def plan_append(existing_values: list[list], field_rows: list[dict], tab: str) -> tuple[list[str], list[list], int]:
     """Return the header, new data rows, and how many leads were already present.
 
-    An empty sheet gets the standard header. A sheet that already has a header
-    keeps that header and gains any missing columns. Rows already identified by
-    place id, Maps link, or name plus phone are not returned.
+    The tab is used only when it is empty or its header is exactly
+    #, Name, Category, Google Maps, Contacts. Anything else is refused so the
+    old tab is not rewritten.
     """
-    if not existing_values:
-        header = list(HEADERS)
-        return header, [project_row(header, fields) for fields in field_rows], 0
-
-    first = [str(cell) for cell in existing_values[0]]
-    if not _looks_like_header(first):
+    if existing_values and not header_matches(existing_values[0]):
         raise SheetExportError(
-            f"Tab {tab!r} has rows but no header. Add a header row "
-            "(Name, Category, Address, Phone, Maps link, ...) or choose an empty tab."
+            f"Tab {tab!r} has a different header, so it was not changed. "
+            "Use an empty tab, or a tab whose header is: #, Name, Category, Google Maps, Contacts."
         )
-
-    header = _extend_header(first)
+    start = next_row_number(existing_values)
     seen = set()
     for row in existing_values[1:]:
-        seen.update(_identity_keys(header, row))
+        name = row[1] if len(row) > 1 else ""
+        maps = row[3] if len(row) > 3 else ""
+        contacts = row[4] if len(row) > 4 else ""
+        seen.update(row_identity(str(name), str(maps), str(contacts)))
 
     fresh = []
     skipped = 0
+    number = start
     for fields in field_rows:
-        row = project_row(header, fields)
-        keys = _identity_keys(header, row)
+        contacts = contacts_text(fields.get("phone", ""), fields.get("email", ""), fields.get("extra", ""))
+        keys = row_identity(fields.get("name") or "", fields.get("maps") or "", contacts)
         if keys and keys & seen:
             skipped += 1
             continue
         seen.update(keys)
-        fresh.append(row)
-    return header, fresh, skipped
+        fresh.append([number, fields.get("name") or "", fields.get("category") or "", fields.get("maps") or "", contacts])
+        number += 1
+    return list(HEADERS), fresh, skipped
 
 
 def _share(drive, file_id: str, owner_email: str) -> str | None:
@@ -318,6 +325,61 @@ def create_sheet(title: str, rows: list[list]) -> tuple[str, str | None]:
     return url, warning
 
 
+def choose_write_tab(requested: str, headers: dict) -> tuple[str, str | None]:
+    """Pick a tab that is missing, empty, or already uses the LeadForge header.
+
+    headers maps a tab name to None (missing), [] (empty), or its first row.
+    A tab with any other header is left untouched. The return value is
+    (tab to write, original tab name if we switched, otherwise None).
+    """
+    def usable(name: str) -> bool:
+        header = headers.get(name, None)
+        if header is None or header == []:
+            return True
+        return header_matches(header)
+
+    if usable(requested):
+        return requested, None
+    alt = alternate_tab_name(requested)
+    if alt != requested and usable(alt):
+        return alt, requested
+    raise SheetExportError(
+        f"Tabs {requested!r} and {alt!r} both have a different header, so nothing was written. "
+        "Set GOOGLE_SHEET_TAB_NAME to a new empty tab."
+    )
+
+
+def _header_row(sheets, spreadsheet_id: str, tab: str):
+    existing = sheets.spreadsheets().values().get(
+        spreadsheetId=spreadsheet_id,
+        range=tab_range(tab, "1:1"),
+    ).execute()
+    values = existing.get("values") or []
+    return values[0] if values else []
+
+
+def _ensure_tab(sheets, spreadsheet_id: str, tab: str, titles: list[str]):
+    if tab in titles:
+        return
+    sheets.spreadsheets().batchUpdate(
+        spreadsheetId=spreadsheet_id,
+        body={"requests": [{"addSheet": {"properties": {"title": tab}}}]},
+    ).execute()
+    titles.append(tab)
+
+
+def _writable_tab(sheets, spreadsheet_id: str, tab: str, titles: list[str]) -> tuple[str, str | None]:
+    known = {}
+    for name in {tab, alternate_tab_name(tab)}:
+        if name in titles:
+            known[name] = _header_row(sheets, spreadsheet_id, name)
+        else:
+            known[name] = None
+    chosen, switched = choose_write_tab(tab, known)
+    _ensure_tab(sheets, spreadsheet_id, chosen, titles)
+    return chosen, switched
+
+
 def _sheets_client(scopes: list[str]):
     info = load_service_account_info(GOOGLE_SERVICE_ACCOUNT_JSON)
     creds = service_account.Credentials.from_service_account_info(info, scopes=scopes)
@@ -340,21 +402,15 @@ def append_to_sheet(spreadsheet_id: str, tab: str, field_rows: list[dict]) -> tu
         ) from exc
 
     titles = [sheet["properties"]["title"] for sheet in meta.get("sheets", [])]
-    if tab not in titles:
-        sheets.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={"requests": [{"addSheet": {"properties": {"title": tab}}}]},
-        ).execute()
-
+    tab, switched = _writable_tab(sheets, spreadsheet_id, tab, titles)
     existing = sheets.spreadsheets().values().get(
         spreadsheetId=spreadsheet_id,
         range=tab_range(tab, "A:Z"),
     ).execute()
     values = existing.get("values") or []
-    previous_header = [str(cell) for cell in values[0]] if values else []
     header, fresh, skipped = plan_append(values, field_rows, tab)
 
-    if not values or previous_header != header:
+    if not values:
         sheets.spreadsheets().values().update(
             spreadsheetId=spreadsheet_id,
             range=tab_range(tab, "A1"),
@@ -375,6 +431,11 @@ def append_to_sheet(spreadsheet_id: str, tab: str, field_rows: list[dict]) -> tu
     note = f"Added {len(fresh)} new {'row' if len(fresh) == 1 else 'rows'} to tab {tab}."
     if skipped:
         note += f" Skipped {skipped} already on the sheet."
+    if switched:
+        note = (
+            f"Tab {switched!r} has a different header, so it was left as-is. "
+            f"Rows were written to {tab!r} instead. {note}"
+        )
     return url, note
 
 
@@ -399,7 +460,7 @@ async def export_to_sheets(campaign_id: int, db: AsyncSession) -> dict:
             tab = GOOGLE_SHEET_TAB_NAME or "Leads"
             url, warning = await asyncio.to_thread(append_to_sheet, GOOGLE_SPREADSHEET_ID, tab, field_rows)
         else:
-            rows = [project_row(HEADERS, fields) for fields in field_rows]
+            rows = [lead_row(fields, index) for index, fields in enumerate(field_rows, start=1)]
             url, warning = await asyncio.to_thread(create_sheet, title, rows)
     except SheetExportError:
         raise

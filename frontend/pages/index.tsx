@@ -5,6 +5,7 @@ import { Search, Zap, Target, Users, Loader2, CheckCircle2, AlertCircle, Trendin
 import SearchForm from '../components/SearchForm';
 import StatusBadge from '../components/StatusBadge';
 import { apiFetch, errorMessage, readBody } from '../lib/api';
+import { formatSearchProgress } from '../lib/progress';
 import toast from 'react-hot-toast';
 
 export default function Home() {
@@ -64,7 +65,7 @@ export default function Home() {
           return;
         }
         setStatus(s);
-        if (s.status === 'completed' || s.status === 'failed') {
+        if (s.status === 'completed' || s.status === 'failed' || s.status === 'cancelled') {
           clearInterval(intervalRef.current);
           intervalRef.current = null;
           setPolling(false);
@@ -144,7 +145,7 @@ export default function Home() {
                     Searching for &ldquo;{status.query}&rdquo; in {status.location}
                   </p>
                   <p className="text-xs text-muted mt-0.5 flex items-center gap-1">
-                    <MapPin className="w-3 h-3" /> Grid-scanning area...
+                    <MapPin className="w-3 h-3" /> Covering the whole city, one area at a time
                   </p>
                 </div>
               </div>
@@ -154,17 +155,30 @@ export default function Home() {
             <div className="progress">
               <div
                 className="progress-fill"
-                style={{ width: `${Math.min((status.total_leads || 0) / 2, 100)}%` }}
+                style={{ width: `${Math.min(status.tiles_total ? ((status.tiles_done || 0) / status.tiles_total) * 100 : 5, 100)}%` }}
               />
             </div>
 
-            <div className="flex items-center gap-4 mt-3 text-xs text-muted">
-              <span>{status.total_leads || 0} leads found</span>
+            <div className="flex items-center justify-between gap-4 mt-3 text-xs text-muted">
+              <span>
+                {formatSearchProgress(status).tiles}
+                {' · '}
+                {formatSearchProgress(status).places}
+                {' · '}
+                {formatSearchProgress(status).leads}
+              </span>
               {status.status === 'running' && (
-                <span className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-ember animate-pulse" />
-                  Scanning...
-                </span>
+                <button
+                  className="btn-secondary text-xs"
+                  disabled={status.cancel_requested}
+                  onClick={async () => {
+                    const res = await apiFetch(`/api/search/${status.id}/cancel`, { method: 'POST' });
+                    const body = await readBody(res);
+                    if (res.ok) setStatus(body);
+                  }}
+                >
+                  {status.cancel_requested ? 'Stopping after this area' : 'Cancel'}
+                </button>
               )}
             </div>
           </motion.div>
@@ -215,7 +229,7 @@ export default function Home() {
 
       {/* Error */}
       <AnimatePresence>
-        {status?.status === 'failed' && !polling && (
+        {(status?.status === 'failed' || status?.status === 'cancelled') && !polling && (
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}

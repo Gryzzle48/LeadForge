@@ -6,7 +6,7 @@ Find local businesses that have **no website**, save them to a Google Sheet, and
 
 </div>
 
-LeadForge searches with a [gosom Google Maps scraper](https://github.com/gosom/google-maps-scraper) you run yourself. It does not call the paid Google Places API. You pick a business type and a city. The scraper reads Google Maps. LeadForge drops businesses that already list their own website and writes the rest to a spreadsheet: name, category, address, phone, Maps link, rating, and review count, plus a draft email. Nothing is emailed automatically.
+LeadForge searches with a [gosom Google Maps scraper](https://github.com/gosom/google-maps-scraper) you run yourself. It does not call the paid Google Places API. You pick a business type and a city. The scraper reads Google Maps. LeadForge drops businesses that already list their own website and writes the rest to a spreadsheet with five columns: `#`, Name, Category, Google Maps, and Contacts. Draft emails stay in the app. Nothing is emailed automatically.
 
 A blank website, a Maps link, or a social profile (Facebook, Instagram, and similar) counts as no website, because the scraper has already opened the place page.
 
@@ -29,6 +29,8 @@ The script checks that Docker is running, creates `backend/.env` the first time,
 | Scraper docs | http://localhost:8080/api/docs |
 
 Stop it with `./stop.sh` (Windows: `stop.bat`). Watch logs with `docker compose logs -f`.
+
+To erase saved searches and start the local database over, run `./reset-db.sh` (Windows: `reset-db.bat`) and type `YES`. That drops the app tables in the compose Postgres database and restarts the API so empty tables are created again. It does not change your Google Sheet or the gosom scraper data.
 
 Sheets export is optional. To turn it on, put your service-account JSON at `secrets/service-account.json` and set these in `backend/.env` (the file is not committed):
 
@@ -70,7 +72,9 @@ cp backend/.env.example backend/.env
 | `API_KEY` | No | If set, every API call except `/api/health` must send it as `X-API-Key` |
 | `CORS_ORIGINS` | No | Comma-separated sites, if something calls the API directly |
 
-Optional Google Sheets export (no Maps or search API key required). If `GOOGLE_SPREADSHEET_ID` is set, each export appends new rows to that tab and skips businesses already listed (same place id, Maps link, or name and phone). The header row is written when the tab is empty. If the spreadsheet id is empty, LeadForge can still create a new spreadsheet. Set `GOOGLE_SHEET_SHARE_EMAIL` only for that fallback, so the new file is shared with you.
+Optional Google Sheets export (no Maps or search API key required). If `GOOGLE_SPREADSHEET_ID` is set, each export appends new rows to that tab. The columns are exactly `#`, Name, Category, Google Maps, and Contacts. `#` keeps counting from the last row already on the sheet. A business already listed (same Maps link, or the same name and contacts when there is no link) is skipped. Contacts puts phone, email, and a social link such as Facebook or Instagram on separate lines. Draft text stays in LeadForge, not in the sheet.
+
+The tab is written only when it is empty or its header is already those five names in that order. If the tab has an older header, it is left unchanged and the rows go to a tab named `{that name} (LeadForge)` instead. If that tab also has a different header, the export stops and asks you to set `GOOGLE_SHEET_TAB_NAME` to a new empty tab. If the spreadsheet id is empty, LeadForge can still create a new spreadsheet. Set `GOOGLE_SHEET_SHARE_EMAIL` only for that fallback, so the new file is shared with you.
 
 `backend/.env` is loaded even if you start the server from the project root. Do not commit it.
 
@@ -103,18 +107,18 @@ NEXT_PUBLIC_API_KEY=
 
 ## How a search works
 
-1. Enter a business type and a city. Optional filters: radius, minimum rating, and minimum or maximum review count. The rating and review filters use the numbers you typed.
-2. LeadForge asks the scraper to search for `{type} in {city}` and polls until the job is `ok` or `failed`. There is no Google Places API key.
-3. Businesses with their own website are left out. Blank websites, Maps links, and social-only pages are kept.
-4. The same place is not saved twice.
-5. Draft emails are written from the category templates. They are drafts only.
-6. Export appends to your spreadsheet. It does not clear rows already there.
+1. Enter a business type and a city. The search covers the whole city, not one radius. Optional: a target number of businesses with no website, plus minimum rating and minimum or maximum review count. Leave the target blank to keep going until the city is covered.
+2. The city outline comes from OpenStreetMap (Nominatim). No Google key. The city is split into tiles, and each tile is one gosom job (`lat`, `lon`, `zoom`, `radius`, `depth`). Tiles run one at a time.
+3. The search stops when the target is reached, when several tiles in a row add no new businesses, when every tile is done, or when the time or tile cap is hit (`SEARCH_MAX_SECONDS`, `SEARCH_MAX_TILES`).
+4. Leads are saved as each tile finishes, show up on the campaign page while the search is still running, and are appended to the Google Sheet when a spreadsheet id is set. You can cancel a running search.
+5. Businesses with their own website are left out. Blank websites, Maps links, and social-only pages are kept. The same place is not saved twice.
+6. Draft emails are written from the category templates. They are drafts only. Nothing is sent.
 
-If the scraper is down, blocked, or still working when the time limit runs out, the search is marked failed and the page shows the reason. It does not stay on "running".
+If the scraper is down or blocked, the search is marked failed and the page shows the reason. It does not stay on "running".
 
 ## Sending mail
 
-The sheet usually has no email address. Type one into the Email column, then optionally paste `scripts/apps_script.gs` into Extensions → Apps Script and run `createDrafts`. That creates Gmail drafts. You send them yourself. The script does not send mail and does not install a timer.
+Draft emails stay on the lead in LeadForge. The sheet is only the contact list, so there is no email or draft column to send from. Copy a contact from the sheet and send the draft yourself.
 
 ## Checks
 
@@ -136,8 +140,9 @@ scripts/apps_script.gs            Optional Gmail drafts
 
 ## Limits
 
-- The scraper is slow, and Google Maps can block it. One search waits up to `MAPS_SCRAPER_MAX_TIME_SECONDS` (default 15 minutes, minimum 3). Use a smaller radius if a job does not finish.
-- Scroll depth defaults to 10 (`MAPS_SCRAPER_DEPTH`). That is the scraper's own page depth, not a Places API page size.
+- The scraper is slow, and Google Maps can block it. Each tile waits up to `SEARCH_TILE_SECONDS` (default 180). A whole-city search stops after `SEARCH_MAX_SECONDS` (default 5400) or `SEARCH_MAX_TILES` (default 40).
+- Tile size starts at `SEARCH_TILE_KM` (default 3). `SEARCH_EMPTY_TILES` (default 3) is how many areas in a row with no new businesses end the search early.
+- `SEARCH_TILE_DEPTH` (default 4) is how far gosom scrolls each tile.
 - A spreadsheet export needs the sheet shared with the service account. Enable the Google Sheets API for that project.
 
 ## License

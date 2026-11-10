@@ -7,8 +7,11 @@ from backend.config import normalize_database_url
 from backend.workers.sheet_exporter import (
     HEADERS,
     SheetExportError,
+    choose_write_tab,
+    contacts_text,
     lead_row,
     load_service_account_info,
+    maps_identity,
     plan_append,
     service_account_path_candidates,
 )
@@ -63,81 +66,112 @@ def test_broken_json_is_not_echoed_back():
     assert "SECRET_KEY_MATERIAL" not in caught.value.message
 
 
-def test_lead_row_has_the_fields_needed_to_call_them():
+def test_lead_row_is_the_five_contact_columns():
     lead = SimpleNamespace(
         name="Ada's Bakery",
         category="Bakery",
         address="1 Main St",
         phone="+1 512-555-0100",
-        maps_url="https://maps.example/ada",
+        maps_url="https://www.google.com/maps/search/?api=1&query_place_id=ChIJada",
         rating=4.6,
         review_count=12,
-        website_uri="",
-        email="",
+        website_uri="https://facebook.com/adabakery",
+        email="ada@example.com",
         email_subject="Hello",
         email_body="Draft body",
         email_status="draft",
-        place_id="abc",
+        place_id="ChIJada",
     )
-    row = lead_row(lead)
-    assert HEADERS == [
-        "Name", "Category", "Address", "Phone", "Maps link", "Rating",
-        "Reviews", "Website", "Email", "Subject", "Draft", "Status", "Notes",
-        "Place ID",
+    row = lead_row(lead, 7)
+    assert HEADERS == ["#", "Name", "Category", "Google Maps", "Contacts"]
+    assert row == [
+        7,
+        "Ada's Bakery",
+        "Bakery",
+        "https://www.google.com/maps/search/?api=1&query_place_id=ChIJada",
+        "+1 512-555-0100\nada@example.com\nhttps://facebook.com/adabakery",
     ]
-    assert row[0] == "Ada's Bakery"
-    assert row[1] == "Bakery"
-    assert row[2] == "1 Main St"
-    assert row[3] == "+1 512-555-0100"
-    assert row[4] == "https://maps.example/ada"
-    assert row[5] == 4.6
-    assert row[6] == 12
-    assert row[7] == ""
-    assert row[10] == "Draft body"
-    assert row[-1] == "abc"
-    assert row.count("Ada's Bakery") == 1
+    assert "Draft body" not in row
+    assert "1 Main St" not in row
 
 
-def test_append_skips_rows_already_on_the_sheet():
-    existing = [[
-        "Name", "Phone", "Maps link",
-    ], [
-        "Ada's Bakery", "+1 512-555-0100", "https://maps.example/ada",
-    ]]
+def test_contacts_skip_blanks_and_maps_links():
+    assert contacts_text("+1 512", "", "https://www.google.com/maps/place/Ada") == "+1 512"
+    assert contacts_text("", "", "") == ""
+
+
+def test_maps_links_with_the_same_place_match():
+    full = "https://www.google.com/maps/search/?api=1&query_place_id=ChIJada"
+    messy = "https://maps.google.com/maps?q=place&query_place_id=ChIJada"
+    assert maps_identity(full) == maps_identity(messy)
+    assert maps_identity("https://maps.google.com/?cid=99") == maps_identity("http://www.google.com/maps?cid=99")
+
+
+def test_append_continues_numbering_and_skips_the_same_map():
+    existing = [
+        ["#", "Name", "Category", "Google Maps", "Contacts"],
+        [1, "Ada's Bakery", "Bakery", "https://www.google.com/maps/search/?api=1&query_place_id=ChIJada", "+1 512-555-0100"],
+        [4, "Other", "Cafe", "https://maps.google.com/?cid=55", ""],
+    ]
     incoming = [{
-        "name": "Ada's Bakery",
-        "phone": "+1 512-555-0100",
-        "maps": "https://maps.example/ada",
-        "place_id": "abc",
-        "address": "1 Main St",
+        "name": "Ada again",
         "category": "Bakery",
-        "rating": 4.6,
-        "reviews": 12,
-        "website": "",
+        "maps": "https://maps.google.com/maps?query_place_id=ChIJada",
+        "phone": "different",
         "email": "",
-        "subject": "Hello",
-        "draft": "Draft",
-        "status": "draft",
-        "notes": "",
+        "extra": "",
     }, {
         "name": "New Cafe",
-        "phone": "+1 512-555-0199",
-        "maps": "https://maps.example/new",
-        "place_id": "new",
-        "address": "2 Main St",
         "category": "Cafe",
-        "rating": 4.2,
-        "reviews": 8,
-        "website": "",
+        "maps": "https://maps.google.com/?cid=77",
+        "phone": "512-555-0199",
         "email": "",
-        "subject": "",
-        "draft": "",
-        "status": "draft",
-        "notes": "",
+        "extra": "https://instagram.com/newcafe",
     }]
     header, rows, skipped = plan_append(existing, incoming, "Leads")
+    assert header == HEADERS
     assert skipped == 1
-    assert len(rows) == 1
-    assert "Place ID" in header
-    assert rows[0][header.index("Name")] == "New Cafe"
-    assert rows[0][header.index("Place ID")] == "new"
+    assert rows == [[
+        5, "New Cafe", "Cafe", "https://maps.google.com/?cid=77",
+        "512-555-0199\nhttps://instagram.com/newcafe",
+    ]]
+
+
+def test_append_without_a_map_uses_name_and_contacts():
+    existing = [
+        ["#", "Name", "Category", "Google Maps", "Contacts"],
+        [2, "Ada's Bakery", "Bakery", "", "+1 512-555-0100"],
+    ]
+    incoming = [
+        {"name": "Ada's Bakery", "category": "Bakery", "maps": "", "phone": "+1 512-555-0100", "email": "", "extra": ""},
+        {"name": "Ada's Bakery", "category": "Bakery", "maps": "", "phone": "different", "email": "", "extra": ""},
+    ]
+    _header, rows, skipped = plan_append(existing, incoming, "Leads")
+    assert skipped == 1
+    assert rows[0][0] == 3
+    assert rows[0][1] == "Ada's Bakery"
+    assert rows[0][4] == "different"
+
+
+def test_old_header_is_not_rewritten():
+    existing = [["Name", "Phone", "Maps link"], ["Ada", "555", "https://maps.example/ada"]]
+    with pytest.raises(SheetExportError) as caught:
+        plan_append(existing, [{
+            "name": "New", "category": "Cafe", "maps": "https://maps.google.com/?cid=1",
+            "phone": "", "email": "", "extra": "",
+        }], "Leads")
+    assert "was not changed" in caught.value.message
+
+
+def test_mismatched_tab_switches_to_a_leadforge_tab():
+    headers = {
+        "Leads": ["Name", "Address"],
+        "Leads (LeadForge)": None,
+    }
+    tab, switched = choose_write_tab("Leads", headers)
+    assert tab == "Leads (LeadForge)"
+    assert switched == "Leads"
+    both = {"Leads": ["Name"], "Leads (LeadForge)": ["Something else"]}
+    with pytest.raises(SheetExportError) as caught:
+        choose_write_tab("Leads", both)
+    assert "nothing was written" in caught.value.message

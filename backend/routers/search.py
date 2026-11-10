@@ -15,10 +15,10 @@ class SearchRequest(BaseModel):
     location: str = Field(min_length=1, max_length=200)
     lat: float | None = Field(default=None, ge=-90, le=90)
     lng: float | None = Field(default=None, ge=-180, le=180)
-    radius: int = Field(default=10000, ge=100, le=50000)
     min_rating: float | None = Field(default=None, ge=0, le=5)
     min_reviews: int | None = Field(default=None, ge=0, le=1_000_000)
     max_reviews: int | None = Field(default=None, ge=0, le=1_000_000)
+    target_leads: int | None = Field(default=None, ge=1, le=5000)
 
     @field_validator("query", "location")
     @classmethod
@@ -51,10 +51,11 @@ async def create_search(
         location=req.location,
         lat=req.lat,
         lng=req.lng,
-        radius=req.radius,
+        radius=None,
         min_rating=req.min_rating,
         min_reviews=req.min_reviews,
         max_reviews=req.max_reviews,
+        target_leads=req.target_leads,
         status=CampaignStatus.PENDING.value,
     )
     db.add(campaign)
@@ -75,6 +76,21 @@ async def list_campaigns(
     )
     campaigns = result.scalars().all()
     return [c.to_dict() for c in campaigns]
+
+@router.post("/search/{campaign_id}/cancel")
+async def cancel_search(
+    campaign_id: int,
+    db: AsyncSession = Depends(get_session),
+):
+    from sqlalchemy import select
+    result = await db.execute(select(Campaign).where(Campaign.id == campaign_id))
+    campaign = result.scalar_one_or_none()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if campaign.status in (CampaignStatus.PENDING.value, CampaignStatus.RUNNING.value):
+        campaign.cancel_requested = True
+        await db.commit()
+    return campaign.to_dict()
 
 @router.get("/search/{campaign_id}")
 async def get_search_status(
