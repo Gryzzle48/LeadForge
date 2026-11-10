@@ -12,7 +12,7 @@ export default function SearchForm({ onStart }: SearchFormProps) {
   const [query, setQuery] = useState('');
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
-  const [maxResults, setMaxResults] = useState('100');
+  const [maxResults, setMaxResults] = useState('50');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -23,8 +23,8 @@ export default function SearchForm({ onStart }: SearchFormProps) {
     }
 
     const count = Number(maxResults);
-    if (!Number.isInteger(count) || count < 1 || count > 500) {
-      toast.error('Maximum results must be between 1 and 500.');
+    if (!Number.isInteger(count) || count < 1 || count > 120) {
+      toast.error('Maximum results must be between 1 and 120 for one local search.');
       return;
     }
 
@@ -51,7 +51,7 @@ export default function SearchForm({ onStart }: SearchFormProps) {
       onStart(data);
     } catch (err) {
       console.error(err);
-      toast.error(err instanceof Error ? err.message : 'Search failed. Check your API key and try again.');
+      toast.error(err instanceof Error ? err.message : 'Search failed. Check the local scraper and try again.');
     } finally {
       setLoading(false);
     }
@@ -116,12 +116,12 @@ export default function SearchForm({ onStart }: SearchFormProps) {
         </div>
 
         <div>
-          <label className="input-label">Maximum Businesses</label>
+          <label className="input-label">Maximum Businesses (1–120)</label>
           <input
             className="input"
             type="number"
             min="1"
-            max="500"
+            max="120"
             step="1"
             value={maxResults}
             onChange={(e) => setMaxResults(e.target.value)}
@@ -138,7 +138,7 @@ export default function SearchForm({ onStart }: SearchFormProps) {
 
       <div className="rounded-xl bg-shadow/30 border border-edge/20 p-4 text-xs text-muted flex items-start gap-2">
         <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5" />
-        <span>Country: United States. The search scans the selected city and state, up to the maximum number of new businesses without a website listed.</span>
+        <span>Country: United States. Searches run through the local self-hosted Maps scraper. One query is limited to 120 requested businesses; actual results depend on Maps coverage and duplicates.</span>
       </div>
 
       <motion.button
