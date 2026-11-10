@@ -77,6 +77,12 @@ async def enrich_lead(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
+    # Avoid spending an external search when both requested fields are present.
+    if lead.email and lead.instagram_url:
+        result_data = lead.to_dict()
+        result_data["contact_sources"] = []
+        return result_data
+
     campaign_result = await db.execute(
         select(Campaign).where(Campaign.id == lead.campaign_id)
     )
