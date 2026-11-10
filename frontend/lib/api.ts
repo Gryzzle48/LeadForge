@@ -30,18 +30,27 @@ export function errorMessage(data: unknown, fallback: string): string {
   return fallback;
 }
 
+export function isHtmlPage(text: string, contentType: string | null): boolean {
+  const type = (contentType || '').toLowerCase();
+  if (!type.includes('text/html')) return false;
+  return /<\s*html[\s>]/i.test(text) || /<\s*!doctype\s+html/i.test(text);
+}
+
+export function nonJsonDetail(status: number, text: string, contentType: string | null): string {
+  if (isHtmlPage(text, contentType)) {
+    return 'This site is not connected to the API. In Vercel, set NEXT_PUBLIC_API_URL to the public https address of the backend (not a private Railway hostname) and redeploy.';
+  }
+  const snippet = text.replace(/\s+/g, ' ').trim().slice(0, 200);
+  if (snippet) return `The server returned ${status}: ${snippet}`;
+  return `The server returned ${status}.`;
+}
+
 export async function readBody(res: Response): Promise<unknown> {
   const text = await res.text();
   if (!text) return {};
   try {
     return JSON.parse(text);
   } catch {
-    if (text.includes('DNS_HOSTNAME_RESOLVED_PRIVATE') || text.includes('DEPLOYMENT_NOT_FOUND')) {
-      return {
-        detail:
-          'This site is not connected to the API. In Vercel, set NEXT_PUBLIC_API_URL to the public https address of the backend (not a private Railway hostname) and redeploy.',
-      };
-    }
-    return { detail: 'The server returned a page instead of data. Check NEXT_PUBLIC_API_URL and redeploy the site.' };
+    return { detail: nonJsonDetail(res.status, text, res.headers.get('content-type')) };
   }
 }

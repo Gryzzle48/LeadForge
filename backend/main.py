@@ -36,6 +36,17 @@ app = FastAPI(title="LeadForge", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+async def unhandled_exception(request: Request, exc: Exception):
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "The server hit an unexpected error. The details are in the API logs."},
+    )
+
+
+app.add_exception_handler(Exception, unhandled_exception)
+
 origins = [o.strip() for o in CORS_ORIGINS.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
