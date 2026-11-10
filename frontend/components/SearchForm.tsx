@@ -24,7 +24,7 @@ export default function SearchForm({ onStart }: SearchFormProps) {
 
     const count = Number(maxResults);
     if (!Number.isInteger(count) || count < 1 || count > 120) {
-      toast.error('Maximum results must be between 1 and 120 for one local search.');
+      toast.error('Target businesses must be between 1 and 120.');
       return;
     }
 
@@ -116,7 +116,7 @@ export default function SearchForm({ onStart }: SearchFormProps) {
         </div>
 
         <div>
-          <label className="input-label">Maximum Businesses (1–120)</label>
+          <label className="input-label">Target Businesses to Return (1–120)</label>
           <input
             className="input"
             type="number"
@@ -138,7 +138,7 @@ export default function SearchForm({ onStart }: SearchFormProps) {
 
       <div className="rounded-xl bg-shadow/30 border border-edge/20 p-4 text-xs text-muted flex items-start gap-2">
         <MapPin className="w-4 h-4 flex-shrink-0 mt-0.5" />
-        <span>Country: United States. Searches run through the local self-hosted Maps scraper. One query is limited to 120 requested businesses; actual results depend on Maps coverage and duplicates.</span>
+        <span>Country: United States. The number above is the target number of unique businesses to return after filtering out listings with websites and duplicates. LeadForge searches a broader candidate set; the final count can be lower if Maps does not provide enough qualifying businesses.</span>
       </div>
 
       <motion.button
