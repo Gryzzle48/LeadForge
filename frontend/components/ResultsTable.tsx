@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { motion } from 'framer-motion';
-import { ExternalLink, Mail, MapPin, MessageSquare, Phone, Instagram, Search, Loader2 } from 'lucide-react';
+import { ExternalLink, Mail, MapPin, MessageSquare, Phone, Instagram, Search, Loader2, XCircle } from 'lucide-react';
 import { apiFetch } from '../lib/api';
 import toast from 'react-hot-toast';
 
@@ -15,6 +15,13 @@ interface Lead {
   contact_sources?: string[];
 }
 
+interface BatchProgress {
+  completed: number;
+  total: number;
+  found: number;
+  failed: number;
+}
+
 interface ResultsTableProps {
   leads: Lead[];
   campaignId: string | number;
@@ -22,19 +29,37 @@ interface ResultsTableProps {
   state?: string;
 }
 
+const REQUEST_START_INTERVAL_MS = 6000;
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function ResultsTable({ leads, campaignId, city, state }: ResultsTableProps) {
   const [localLeads, setLocalLeads] = useState<Lead[]>(leads);
   const [enrichingIds, setEnrichingIds] = useState<number[]>([]);
+  const [batchRunning, setBatchRunning] = useState(false);
+  const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
+  const batchCancelRef = useRef(false);
 
   useEffect(() => {
-    setLocalLeads(leads);
+    // The campaign page refreshes from the API periodically. Merge fresh database
+    // values without dropping source links returned by a just-finished enrichment.
+    setLocalLeads((current) => leads.map((incoming) => {
+      const previous = current.find((lead) => lead.id === incoming.id);
+      return {
+        ...incoming,
+        email: incoming.email || previous?.email,
+        instagram_url: incoming.instagram_url || previous?.instagram_url,
+        contact_sources: previous?.contact_sources || incoming.contact_sources,
+      };
+    }));
   }, [leads]);
 
   const enrichLead = async (leadId: number) => {
-    setEnrichingIds((current) => [...current, leadId]);
+    setEnrichingIds((current) => current.includes(leadId) ? current : [...current, leadId]);
     try {
       const response = await apiFetch('/api/leads/' + leadId + '/enrich', { method: 'POST' });
-      const payload = await response.json();
+      let payload: any = {};
+      try { payload = await response.json(); } catch { /* Empty or non-JSON error response. */ }
       if (!response.ok) throw new Error(payload.detail || 'Contact search failed.');
       setLocalLeads((current) => current.map((lead) => lead.id === leadId ? payload : lead));
       const found = Boolean(payload.email || payload.instagram_url);
@@ -46,8 +71,106 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
     }
   };
 
+  const startBatchEnrichment = async () => {
+    const candidates = localLeads.filter((lead) => !lead.email || !lead.instagram_url);
+    if (!candidates.length) {
+      toast.success('Every business already has an email and Instagram link.');
+      return;
+    }
+    if (enrichingIds.length) return;
+
+    batchCancelRef.current = false;
+    setBatchRunning(true);
+    setBatchProgress({ completed: 0, total: candidates.length, found: 0, failed: 0 });
+
+    let nextIndex = 0;
+    let nextStartAt = Date.now();
+    let stopReason: string | null = null;
+
+    const worker = async () => {
+      while (!batchCancelRef.current) {
+        const index = nextIndex++;
+        if (index >= candidates.length) return;
+
+        const lead = candidates[index];
+        const delay = Math.max(0, nextStartAt - Date.now());
+        nextStartAt = Math.max(Date.now(), nextStartAt) + REQUEST_START_INTERVAL_MS;
+        if (delay > 0) await wait(delay);
+        if (batchCancelRef.current) return;
+
+        setEnrichingIds((current) => current.includes(lead.id) ? current : [...current, lead.id]);
+        let foundNewContact = false;
+        let failed = false;
+
+        try {
+          const response = await apiFetch('/api/leads/' + lead.id + '/enrich', { method: 'POST' });
+          let payload: any = {};
+          try { payload = await response.json(); } catch { /* Handled below. */ }
+          if (!response.ok) {
+            const error: any = new Error(payload.detail || 'Contact search failed.');
+            error.status = response.status;
+            throw error;
+          }
+
+          foundNewContact = Boolean(
+            (!lead.email && payload.email) ||
+            (!lead.instagram_url && payload.instagram_url)
+          );
+          setLocalLeads((current) => current.map((item) => item.id === lead.id ? payload : item));
+        } catch (error: any) {
+          failed = true;
+          const message = error instanceof Error ? error.message : 'Contact search failed';
+          const providerStopped =
+            error?.status === 429 ||
+            /not configured|SERPAPI_API_KEY|provider.*HTTP (401|403|429|5\d\d)|rate limit/i.test(message);
+
+          if (providerStopped) {
+            stopReason = message;
+            batchCancelRef.current = true;
+          }
+        } finally {
+          setEnrichingIds((current) => current.filter((id) => id !== lead.id));
+          setBatchProgress((current) => current ? ({
+            ...current,
+            completed: current.completed + 1,
+            found: current.found + (foundNewContact ? 1 : 0),
+            failed: current.failed + (failed ? 1 : 0),
+          }) : current);
+        }
+      }
+    };
+
+    try {
+      // Two workers, with globally spaced request starts to stay under the
+      // single-lead endpoint's 10-requests-per-minute limit.
+      await Promise.all([worker(), worker()]);
+    } finally {
+      setBatchRunning(false);
+      setEnrichingIds([]);
+    }
+
+    if (stopReason) {
+      toast.error('Bulk search stopped: ' + stopReason);
+    } else if (batchCancelRef.current) {
+      toast('Bulk search stopped. Completed results have been saved.');
+    } else {
+      const finalProgress = batchProgress;
+      toast.success(
+        'Bulk search finished. Newly found contacts: ' +
+        (finalProgress ? finalProgress.found : 0) +
+        '. Errors: ' + (finalProgress ? finalProgress.failed : 0) + '.'
+      );
+    }
+  };
+
+  const needsEnrichmentCount = localLeads.filter((lead) => !lead.email || !lead.instagram_url).length;
+  const progressPercent = batchProgress?.total
+    ? Math.round((batchProgress.completed / batchProgress.total) * 100)
+    : 0;
+
   return (
     <motion.div
+      data-campaign-id={campaignId}
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       className="glass-panel overflow-hidden"
@@ -62,7 +185,54 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
             <p className="text-xs text-muted">{localLeads.length} new businesses found</p>
           </div>
         </div>
+
+        {needsEnrichmentCount > 0 && (
+          <div className="flex items-center gap-2">
+            {batchRunning ? (
+              <button
+                type="button"
+                onClick={() => { batchCancelRef.current = true; }}
+                className="btn-secondary text-sm inline-flex items-center gap-2"
+              >
+                <XCircle className="w-4 h-4" /> Stop search
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={startBatchEnrichment}
+                disabled={enrichingIds.length > 0}
+                className="btn-primary text-sm inline-flex items-center gap-2 disabled:opacity-50"
+              >
+                <Search className="w-4 h-4" />
+                Find contacts for all ({needsEnrichmentCount})
+              </button>
+            )}
+          </div>
+        )}
       </div>
+
+      {batchProgress && (
+        <div className="px-5 py-3 border-b border-edge/20">
+          <div className="flex items-center justify-between gap-3 text-xs text-muted mb-2">
+            <span>
+              {batchRunning ? 'Searching public contacts…' : 'Last bulk search'}
+              {' · '}{batchProgress.completed}/{batchProgress.total}
+              {' · '}found {batchProgress.found}
+              {' · '}errors {batchProgress.failed}
+            </span>
+            <span>{progressPercent}%</span>
+          </div>
+          <div className="h-1.5 rounded-full bg-shadow overflow-hidden">
+            <div
+              className="h-full rounded-full bg-jade transition-all duration-300"
+              style={{ width: progressPercent + '%' }}
+            />
+          </div>
+          <p className="text-[11px] text-muted mt-2">
+            One external search per business with a missing email or Instagram link. Requests are spaced to respect the server limit.
+          </p>
+        </div>
+      )}
 
       {localLeads.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 px-4">
@@ -128,7 +298,7 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
                           <button
                             type="button"
                             onClick={() => enrichLead(lead.id)}
-                            disabled={isEnriching}
+                            disabled={isEnriching || batchRunning}
                             className="inline-flex items-center gap-1 text-frost hover:underline disabled:opacity-50"
                           >
                             {isEnriching ? <Loader2 className="w-3 h-3 animate-spin" /> : <Search className="w-3 h-3" />}
