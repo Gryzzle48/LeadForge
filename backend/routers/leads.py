@@ -6,8 +6,6 @@ from sqlalchemy import select
 from slowapi import Limiter
 from ..database import get_session
 from ..models.lead import Lead
-from ..models.campaign import Campaign
-from ..workers.contact_finder import find_public_contacts
 from ..auth import client_ip_key
 
 router = APIRouter()
@@ -63,50 +61,3 @@ async def update_lead(
     await db.commit()
     await db.refresh(lead)
     return lead.to_dict()
-
-
-@router.post("/leads/{lead_id}/enrich")
-@limiter.limit("10/minute")
-async def enrich_lead(
-    request: Request,
-    lead_id: int,
-    db: AsyncSession = Depends(get_session),
-):
-    result = await db.execute(select(Lead).where(Lead.id == lead_id))
-    lead = result.scalar_one_or_none()
-    if not lead:
-        raise HTTPException(status_code=404, detail="Lead not found")
-
-    # Avoid spending an external search when both requested fields are present.
-    if lead.email and lead.instagram_url:
-        result_data = lead.to_dict()
-        result_data["contact_sources"] = []
-        return result_data
-
-    campaign_result = await db.execute(
-        select(Campaign).where(Campaign.id == lead.campaign_id)
-    )
-    campaign = campaign_result.scalar_one_or_none()
-    if not campaign:
-        raise HTTPException(status_code=404, detail="Campaign not found")
-
-    try:
-        contacts = await find_public_contacts(
-            business_name=lead.name,
-            city=campaign.city,
-            state=campaign.state,
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-    # Never overwrite contact information already present in the lead record.
-    if not lead.email and contacts.get("email"):
-        lead.email = contacts["email"]
-    if not lead.instagram_url and contacts.get("instagram_url"):
-        lead.instagram_url = contacts["instagram_url"]
-
-    await db.commit()
-    await db.refresh(lead)
-    result_data = lead.to_dict()
-    result_data["contact_sources"] = contacts.get("sources", [])
-    return result_data
