@@ -63,7 +63,7 @@ export default function Home() {
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="grid grid-cols-3 gap-3">
         {[
           { icon: Target, label: 'Search filters', value: 'Category + Area', desc: 'US businesses' },
-          { icon: TrendingUp, label: 'Result limit', value: 'Up to 500', desc: 'per search' },
+          { icon: TrendingUp, label: 'Result limit', value: 'Up to 120', desc: 'per search' },
           { icon: Users, label: 'Duplicate check', value: 'Global', desc: 'Place ID' },
         ].map((stat, index) => (
           <div key={index} className="glass-panel-light p-4 text-center">
