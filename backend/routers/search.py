@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
+from ..config import MAX_RESULTS_PER_QUERY
 from ..database import get_session
 from ..models.campaign import Campaign, CampaignStatus
 from ..workers.grid_search import run_grid_search
@@ -18,7 +19,7 @@ class SearchRequest(BaseModel):
     country: str = Field(default="United States", max_length=80)
     # Kept for compatibility with older clients that sent "location".
     location: str | None = Field(default=None, max_length=255)
-    max_results: int = Field(default=100, ge=1, le=500)
+    max_results: int = Field(default=100, ge=1, le=MAX_RESULTS_PER_QUERY)
     lat: float | None = None
     lng: float | None = None
     radius: int = Field(default=50000, ge=100, le=50000)
