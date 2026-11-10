@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Zap, Target, Users, Loader2, CheckCircle2, AlertCircle, TrendingUp, MapPin } from 'lucide-react';
+import { Zap, Target, Users, Loader2, CheckCircle2, AlertCircle, TrendingUp, MapPin } from 'lucide-react';
 import SearchForm from '../components/SearchForm';
 import StatusBadge from '../components/StatusBadge';
 import { apiFetch } from '../lib/api';
@@ -27,7 +27,7 @@ export default function Home() {
     setPolling(true);
     intervalRef.current = setInterval(async () => {
       try {
-        const res = await apiFetch(\`/api/search/\${data.campaign_id}\`);
+        const res = await apiFetch('/api/search/' + data.campaign_id);
         if (!res.ok) throw new Error('Could not get search status.');
         const result = await res.json();
         setStatus(result);
@@ -89,7 +89,7 @@ export default function Home() {
               <StatusBadge status={status.status} />
             </div>
             <div className="progress">
-              <div className="progress-fill" style={{ width: \`\${Math.min((status.total_leads || 0) / Math.max(status.max_results || 100, 1) * 100, 100)}%\` }} />
+              <div className="progress-fill" style={{ width: Math.min((status.total_leads || 0) / Math.max(status.max_results || 100, 1) * 100, 100) + '%' }} />
             </div>
             <div className="flex items-center gap-4 mt-3 text-xs text-muted">
               <span>{status.total_leads || 0} new businesses found</span>
@@ -108,10 +108,10 @@ export default function Home() {
               Found <span className="text-pearl font-semibold">{status.total_leads}</span> new businesses without a website listed in {status.location}
             </p>
             <div className="flex items-center justify-center gap-3">
-              <motion.button whileTap={{ scale: 0.95 }} className="btn-primary" onClick={() => router.push(\`/campaigns/\${status.id}\`)}>
+              <motion.button whileTap={{ scale: 0.95 }} className="btn-primary" onClick={() => router.push('/campaigns/' + status.id)}>
                 <Users className="w-4 h-4" /> Review Leads
               </motion.button>
-              <motion.button whileTap={{ scale: 0.95 }} className="btn-secondary" onClick={() => router.push(\`/export/\${status.id}\`)}>
+              <motion.button whileTap={{ scale: 0.95 }} className="btn-secondary" onClick={() => router.push('/export/' + status.id)}>
                 <Zap className="w-4 h-4" /> Add to Google Sheets
               </motion.button>
             </div>

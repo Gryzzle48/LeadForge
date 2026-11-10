@@ -3,6 +3,7 @@ import aiohttp
 import math
 import logging
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import async_session
 from ..models.campaign import Campaign, CampaignStatus
@@ -16,7 +17,7 @@ GEOCODING_API_BASE = "https://maps.googleapis.com/maps/api/geocode/json"
 FIELDS_MASK = (
     "places.id,places.displayName,places.formattedAddress,"
     "places.internationalPhoneNumber,places.websiteUri,places.googleMapsUri,"
-    "places.rating,places.userRatingCount,places.primaryType"
+    "places.primaryType,places.primaryTypeDisplayName,places.rating,places.userRatingCount"
 )
 
 
@@ -136,14 +137,14 @@ async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
 
         total_errors = 0
         total_attempts = 0
-        added_place_ids = []
+        added_count = 0
         target_count = req.max_results
 
         timeout = aiohttp.ClientTimeout(total=35)
         async with aiohttp.ClientSession(timeout=timeout) as session:
             batch_size = 5
             for offset in range(0, len(centers), batch_size):
-                if len(added_place_ids) >= target_count:
+                if added_count >= target_count:
                     break
 
                 batch = centers[offset:offset + batch_size]
@@ -159,7 +160,7 @@ async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
                         continue
 
                     for place in places:
-                        if len(added_place_ids) >= target_count:
+                        if added_count >= target_count:
                             break
 
                         place_id = place.get("id")
@@ -172,12 +173,13 @@ async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
                             continue
 
                         name = (place.get("displayName") or {}).get("text") or "Unknown"
-                        category = place.get("primaryType") or req.query
+                        type_display = place.get("primaryTypeDisplayName") or {}
+                        category = type_display.get("text") or place.get("primaryType") or req.query
                         maps_url = place.get("googleMapsUri") or (
                             "https://www.google.com/maps/search/?api=1&query_place_id=" + place_id
                         )
 
-                        db.add(Lead(
+                        statement = pg_insert(Lead).values(
                             campaign_id=campaign_id,
                             place_id=place_id,
                             name=name,
@@ -192,16 +194,18 @@ async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
                             website_uri=None,
                             has_website=False,
                             email_status="no_email",
-                        ))
-                        added_place_ids.append(place_id)
+                        ).on_conflict_do_nothing(index_elements=[Lead.place_id])
+                        insert_result = await db.execute(statement)
+                        if insert_result.rowcount:
+                            added_count += 1
 
                 await db.commit()
 
-        campaign.total_leads = len(added_place_ids)
+        campaign.total_leads = added_count
         if total_attempts > 0 and total_errors == total_attempts:
             campaign.status = CampaignStatus.FAILED.value
             logger.error("Campaign %s: all %s Places API calls failed", campaign_id, total_errors)
         else:
             campaign.status = CampaignStatus.COMPLETED.value
-            logger.info("Campaign %s completed with %s new leads", campaign_id, len(added_place_ids))
+            logger.info("Campaign %s completed with %s new leads", campaign_id, added_count)
         await db.commit()

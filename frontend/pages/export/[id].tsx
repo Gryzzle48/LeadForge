@@ -18,8 +18,8 @@ export default function ExportPage() {
     if (!id) return;
     try {
       const [campRes, leadsRes] = await Promise.all([
-        apiFetch(\`/api/search/\${id}\`),
-        apiFetch(\`/api/campaigns/\${id}/leads\`),
+        apiFetch('/api/search/' + id),
+        apiFetch('/api/campaigns/' + id + '/leads'),
       ]);
       if (!campRes.ok || !leadsRes.ok) throw new Error('Could not load campaign data.');
       setCampaign(await campRes.json());
@@ -37,7 +37,7 @@ export default function ExportPage() {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const res = await apiFetch(\`/api/campaigns/\${id}/export\`, { method: 'POST' });
+      const res = await apiFetch('/api/campaigns/' + id + '/export', { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Export failed.');
       if (data.sheet_url) {

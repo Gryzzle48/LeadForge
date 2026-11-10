@@ -17,8 +17,8 @@ export default function CampaignPage() {
     if (!id) return;
     try {
       const [campRes, leadsRes] = await Promise.all([
-        apiFetch(\`/api/search/\${id}\`),
-        apiFetch(\`/api/campaigns/\${id}/leads\`),
+        apiFetch('/api/search/' + id),
+        apiFetch('/api/campaigns/' + id + '/leads'),
       ]);
       if (!campRes.ok || !leadsRes.ok) throw new Error('Could not load campaign data.');
       setCampaign(await campRes.json());
@@ -59,7 +59,7 @@ export default function CampaignPage() {
             </p>
           </div>
         </div>
-        <button onClick={() => router.push(\`/export/\${id}\`)} className="btn-primary text-sm">
+        <button onClick={() => router.push('/export/' + id)} className="btn-primary text-sm">
           Add to Google Sheets
         </button>
       </div>
