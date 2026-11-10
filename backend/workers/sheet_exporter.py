@@ -74,28 +74,55 @@ class SheetExportError(Exception):
         self.status_code = status_code
 
 
+def service_account_path_candidates(text: str) -> list[str]:
+    """Paths to try for a service-account file.
+
+    ./secrets/service-account.json works on the host and inside Docker, where
+    that folder is mounted at /app/secrets and /secrets.
+    """
+    normalized = text.replace("\\", "/").strip()
+    names = [text, normalized, os.path.expanduser(normalized)]
+    base = os.path.basename(normalized)
+    if base and base not in {".", ".."}:
+        names.extend([
+            os.path.join("/app/secrets", base),
+            os.path.join("/secrets", base),
+            os.path.join(os.getcwd(), "secrets", base),
+        ])
+    found = []
+    seen = set()
+    for name in names:
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        found.append(name)
+    return found
+
+
 def load_service_account_info(raw: str) -> dict:
     text = (raw or "").strip()
     if not text:
         raise SheetExportError(
             "Google Sheets is not configured. Set GOOGLE_SERVICE_ACCOUNT_JSON on the backend."
         )
-    if os.path.isfile(text):
-        with open(text, encoding="utf-8") as handle:
-            info = json.load(handle)
-    elif text.startswith("{"):
+    if text.startswith("{"):
         try:
             info = json.loads(text)
         except json.JSONDecodeError as exc:
             raise SheetExportError("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON.") from exc
     else:
-        try:
-            info = json.loads(base64.b64decode(text, validate=True).decode("utf-8"))
-        except Exception as exc:
-            raise SheetExportError(
-                "GOOGLE_SERVICE_ACCOUNT_JSON must be the service-account JSON, "
-                "that same JSON encoded as base64, or a path to the JSON file."
-            ) from exc
+        path = next((item for item in service_account_path_candidates(text) if os.path.isfile(item)), None)
+        if path:
+            with open(path, encoding="utf-8") as handle:
+                info = json.load(handle)
+        else:
+            try:
+                info = json.loads(base64.b64decode(text, validate=True).decode("utf-8"))
+            except Exception as exc:
+                raise SheetExportError(
+                    "GOOGLE_SERVICE_ACCOUNT_JSON must be the service-account JSON, "
+                    "that JSON encoded as base64, or a path such as ./secrets/service-account.json."
+                ) from exc
     if not isinstance(info, dict) or "client_email" not in info:
         raise SheetExportError("GOOGLE_SERVICE_ACCOUNT_JSON does not look like a Google service account key.")
     return info

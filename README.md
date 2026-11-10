@@ -10,39 +10,49 @@ LeadForge searches with a [gosom Google Maps scraper](https://github.com/gosom/g
 
 A blank website, a Maps link, or a social profile (Facebook, Instagram, and similar) counts as no website, because the scraper has already opened the place page.
 
-## What you need
+## Quick start: one command
 
-- Docker, for Postgres and the maps scraper
-- Python 3.11+ and Node.js 18+
-- A Google service account only if you export to a spreadsheet you already have
-
-## 1. Start Postgres and the scraper
-
-From the project root:
+Install [Docker Desktop](https://docs.docker.com/get-docker/) and leave it running. Then, from this folder:
 
 ```bash
-docker compose up -d
+./start.sh
 ```
 
-That starts:
+On Windows, double-click `start.bat` or run it from a command prompt.
 
-- Postgres on port 5432
-- gosom on port 8080 (`MAPS_SCRAPER_API_URL=http://localhost:8080`)
+The script checks that Docker is running, creates `backend/.env` the first time, builds the stack, and opens the app.
 
-The scraper's first start downloads a browser. A search often takes several minutes. Open http://localhost:8080/api/docs to see the scraper API.
+| | |
+| --- | --- |
+| App | http://localhost:3000 |
+| API health | http://localhost:8000/api/health |
+| Scraper docs | http://localhost:8080/api/docs |
 
-The compose service is:
+Stop it with `./stop.sh` (Windows: `stop.bat`). Watch logs with `docker compose logs -f`.
 
-```yaml
-gmaps:
-  image: gosom/google-maps-scraper:latest
-  command: ["-data-folder", "/gmapsdata", "-addr", ":8080"]
-  ports:
-    - "8080:8080"
-  shm_size: "1gb"
-  volumes:
-    - gmapsdata:/gmapsdata
+Sheets export is optional. To turn it on, put your service-account JSON at `secrets/service-account.json` and set these in `backend/.env` (the file is not committed):
+
+```env
+GOOGLE_SERVICE_ACCOUNT_JSON=./secrets/service-account.json
+GOOGLE_SPREADSHEET_ID=the id from the sheet URL
+GOOGLE_SHEET_TAB_NAME=Leads
 ```
+
+Inside Docker, the API talks to the scraper at `http://gmaps:8080` and to Postgres on the compose network. You do not put those addresses in `.env`. The website is built with `NEXT_PUBLIC_API_URL=http://backend:8000` so the site container can reach the API. Building the image by itself, without Compose, defaults that address to `http://localhost:8000`.
+
+## What you need
+
+- Docker Desktop (or Docker Engine with Compose). That is enough for the one-command start.
+- Python 3.11+ and Node.js 18+ only if you run the API or the website outside Docker
+- A Google service account only if you export to a spreadsheet you already have
+
+## 1. Start everything
+
+`./start.sh` (or `start.bat` on Windows) is the normal way. It runs Postgres, the maps scraper, the API, and the website.
+
+A search can take several minutes. The scraper docs are at http://localhost:8080/api/docs.
+
+`docker-compose.yml` runs four services: `postgres`, `gmaps`, `backend`, and `frontend`. The API container uses `http://gmaps:8080` and the compose Postgres hostname. Those override `backend/.env` while the containers are running.
 
 ## 2. Backend settings
 
@@ -52,8 +62,8 @@ cp backend/.env.example backend/.env
 
 | Variable | Required | What to put |
 | --- | --- | --- |
-| `MAPS_SCRAPER_API_URL` | Yes | Scraper base URL, for example `http://localhost:8080`. No trailing path |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | Only to export | Service-account JSON, that JSON in base64, or a path to the file |
+| `MAPS_SCRAPER_API_URL` | Yes, outside Docker | Scraper base URL, for example `http://localhost:8080`. Compose replaces this with `http://gmaps:8080` |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Only to export | The JSON itself, that JSON in base64, or `./secrets/service-account.json` |
 | `GOOGLE_SPREADSHEET_ID` | Only to export | The id in the sheet URL: `docs.google.com/spreadsheets/d/<this>/edit` |
 | `GOOGLE_SHEET_TAB_NAME` | No | Tab to append to. Defaults to `Leads`. Share that spreadsheet with the service account email as an editor |
 | `DATABASE_URL` | Yes | Postgres. A Railway `postgres://...?sslmode=require` URL is accepted |

@@ -36,9 +36,11 @@ data/*.csv
 *.csv
 
 
-# Env
+# Env and local credentials
 backend/.env
 frontend/.env.local
 frontend/.env.production
+secrets/*
+!secrets/README.txt
 
 .vercel

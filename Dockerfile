@@ -1,3 +1,4 @@
+# Railway image. Local one-command startup uses backend/Dockerfile via docker compose.
 FROM python:3.11-slim
 
 WORKDIR /app
