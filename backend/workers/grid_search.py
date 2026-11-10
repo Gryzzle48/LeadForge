@@ -2,6 +2,7 @@ import asyncio
 import csv
 import hashlib
 import io
+import json
 import logging
 
 import aiohttp
@@ -113,7 +114,7 @@ async def _run_scraper_query(
                 f"Local Maps scraper rejected the job (HTTP {response.status}): {body[:300]}"
             )
         try:
-            created = await asyncio.to_thread(__import__("json").loads, body)
+            created = json.loads(body)
         except Exception as exc:
             raise RuntimeError("Local Maps scraper returned an invalid job response.") from exc
 
@@ -134,7 +135,7 @@ async def _run_scraper_query(
                     f"Could not read local Maps scraper job (HTTP {response.status}): {body[:300]}"
                 )
             try:
-                job = await asyncio.to_thread(__import__("json").loads, body)
+                job = json.loads(body)
             except Exception as exc:
                 raise RuntimeError("Local Maps scraper returned invalid job status.") from exc
 
