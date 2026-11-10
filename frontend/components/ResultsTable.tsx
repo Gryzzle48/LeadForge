@@ -129,7 +129,7 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
           const message = error instanceof Error ? error.message : 'Contact search failed';
           const providerStopped =
             error?.status === 429 ||
-            /not configured|SERPAPI_API_KEY|provider.*HTTP (401|403|429|5\d\d)|rate limit/i.test(message);
+            /not configured|SERPAPI_API_KEY|provider.*HTTP (401|403|429|5\d\d)|contact search provider error|rate limit/i.test(message);
 
           failedCount += 1;
           if (providerStopped) {
