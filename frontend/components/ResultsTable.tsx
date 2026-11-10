@@ -22,6 +22,12 @@ interface BatchProgress {
   failed: number;
 }
 
+interface BatchFailure {
+  id: number;
+  name: string;
+  message: string;
+}
+
 interface ResultsTableProps {
   leads: Lead[];
   campaignId: string | number;
@@ -29,7 +35,9 @@ interface ResultsTableProps {
   state?: string;
 }
 
-const REQUEST_START_INTERVAL_MS = 6000;
+// Slightly slower than the endpoint's 10/minute limit to leave room for
+// clock jitter and avoid hitting the limit at exact six-second boundaries.
+const REQUEST_START_INTERVAL_MS = 6500;
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -38,6 +46,7 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
   const [enrichingIds, setEnrichingIds] = useState<number[]>([]);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
+  const [batchFailures, setBatchFailures] = useState<BatchFailure[]>([]);
   const batchCancelRef = useRef(false);
 
   useEffect(() => {
@@ -86,6 +95,7 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
 
     batchCancelRef.current = false;
     setBatchRunning(true);
+    setBatchFailures([]);
     setBatchProgress({ completed: 0, total: candidates.length, found: 0, failed: 0 });
 
     let nextIndex = 0;
@@ -132,6 +142,10 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
             /not configured|SERPAPI_API_KEY|provider.*HTTP (401|403|429|5\d\d)|contact search provider error|rate limit/i.test(message);
 
           failedCount += 1;
+          setBatchFailures((current) => [
+            ...current,
+            { id: lead.id, name: lead.name, message },
+          ]);
           if (providerStopped) {
             stopReason = message;
             batchCancelRef.current = true;
@@ -222,7 +236,11 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
         <div className="px-5 py-3 border-b border-edge/20">
           <div className="flex items-center justify-between gap-3 text-xs text-muted mb-2">
             <span>
-              {batchRunning ? 'Searching public contacts…' : 'Last bulk search'}
+              {batchRunning
+                ? 'Searching public contacts…'
+                : batchCancelRef.current
+                  ? 'Bulk search stopped'
+                  : 'Last bulk search'}
               {' · '}{batchProgress.completed}/{batchProgress.total}
               {' · '}found {batchProgress.found}
               {' · '}errors {batchProgress.failed}
@@ -236,8 +254,26 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
             />
           </div>
           <p className="text-[11px] text-muted mt-2">
-            One external search per business with a missing email or Instagram link. Requests are spaced to respect the server limit.
+            One external search per business with a missing email or Instagram link. Requests are spaced to stay below the server limit.
+            {batchCancelRef.current && !batchRunning
+              ? ' Unstarted businesses were left in the queue.'
+              : ''}
           </p>
+          {batchFailures.length > 0 && (
+            <div className="mt-3 space-y-1">
+              <p className="text-xs font-medium text-pearl">Businesses with errors</p>
+              {batchFailures.slice(0, 5).map((failure) => (
+                <p key={failure.id} className="text-[11px] text-muted break-words">
+                  <span className="text-pearl">{failure.name}:</span> {failure.message}
+                </p>
+              ))}
+              {batchFailures.length > 5 && (
+                <p className="text-[11px] text-muted">
+                  And {batchFailures.length - 5} more. See the error count above.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
