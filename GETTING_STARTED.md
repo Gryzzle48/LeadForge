@@ -1,5 +1,7 @@
 # Getting started
 
+The short way: install Docker, then run `./start.sh` (Windows: `start.bat`). That starts the database, the maps scraper, the API, and the website, and opens http://localhost:3000. Stop with `./stop.sh` or `stop.bat`.
+
 ## What you need
 
 - Docker

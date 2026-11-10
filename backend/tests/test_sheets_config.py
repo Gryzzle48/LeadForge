@@ -10,6 +10,7 @@ from backend.workers.sheet_exporter import (
     lead_row,
     load_service_account_info,
     plan_append,
+    service_account_path_candidates,
 )
 
 
@@ -35,6 +36,19 @@ def test_service_account_json_and_base64():
     assert load_service_account_info(raw)["client_email"].startswith("sheets@")
     encoded = base64.b64encode(raw.encode()).decode()
     assert load_service_account_info(encoded)["type"] == "service_account"
+
+
+def test_service_account_file_and_mounted_path(tmp_path):
+    key = tmp_path / "service-account.json"
+    key.write_text(
+        '{"type":"service_account","client_email":"sheets@example.iam.gserviceaccount.com"}',
+        encoding="utf-8",
+    )
+    info = load_service_account_info(str(key))
+    assert info["client_email"].startswith("sheets@")
+    candidates = service_account_path_candidates("./secrets/service-account.json")
+    assert "/secrets/service-account.json" in candidates
+    assert "/app/secrets/service-account.json" in candidates
 
 
 def test_bad_service_account_is_rejected():
