@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, Field, model_validator
+from typing import Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
 from ..config import MAX_RESULTS_PER_QUERY
@@ -14,6 +15,7 @@ limiter = Limiter(key_func=client_ip_key)
 
 class SearchRequest(BaseModel):
     query: str = Field(min_length=2, max_length=255)
+    location_scope: Literal["city", "region"] = "city"
     city: str | None = Field(default=None, max_length=120)
     state: str | None = Field(default=None, max_length=120)
     country: str = Field(default="United States", max_length=80)
@@ -31,9 +33,20 @@ class SearchRequest(BaseModel):
         if not isinstance(values, dict):
             return values
 
+        scope = values.get("location_scope", "city")
         city = values.get("city")
         state = values.get("state")
         location = values.get("location")
+        country = values.get("country", "United States")
+
+        if scope == "region":
+            region = str(state or "").strip()
+            if not region:
+                raise ValueError("state/region is required for a regional search")
+            values["city"] = None
+            values["state"] = region
+            values["location"] = ", ".join(part for part in [region, country] if part)
+            return values
 
         if (not city or not state) and location:
             parts = [part.strip() for part in str(location).split(",") if part.strip()]
@@ -49,8 +62,10 @@ class SearchRequest(BaseModel):
 
         if values.get("city") and values.get("state"):
             values["location"] = ", ".join(
-                part for part in [values["city"], values["state"], values.get("country", "United States")] if part
+                part for part in [values["city"], values["state"], country] if part
             )
+        elif location:
+            values["location"] = str(location).strip()
         return values
 
 
