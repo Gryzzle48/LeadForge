@@ -85,6 +85,9 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
 
     let nextIndex = 0;
     let nextStartAt = Date.now();
+    let completedCount = 0;
+    let foundCount = 0;
+    let failedCount = 0;
     let stopReason: string | null = null;
 
     const worker = async () => {
@@ -116,6 +119,7 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
             (!lead.email && payload.email) ||
             (!lead.instagram_url && payload.instagram_url)
           );
+          if (foundNewContact) foundCount += 1;
           setLocalLeads((current) => current.map((item) => item.id === lead.id ? payload : item));
         } catch (error: any) {
           failed = true;
@@ -124,18 +128,20 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
             error?.status === 429 ||
             /not configured|SERPAPI_API_KEY|provider.*HTTP (401|403|429|5\d\d)|rate limit/i.test(message);
 
+          failedCount += 1;
           if (providerStopped) {
             stopReason = message;
             batchCancelRef.current = true;
           }
         } finally {
           setEnrichingIds((current) => current.filter((id) => id !== lead.id));
-          setBatchProgress((current) => current ? ({
-            ...current,
-            completed: current.completed + 1,
-            found: current.found + (foundNewContact ? 1 : 0),
-            failed: current.failed + (failed ? 1 : 0),
-          }) : current);
+          completedCount += 1;
+          setBatchProgress({
+            completed: completedCount,
+            total: candidates.length,
+            found: foundCount,
+            failed: failedCount,
+          });
         }
       }
     };
@@ -154,11 +160,9 @@ export default function ResultsTable({ leads, campaignId, city, state }: Results
     } else if (batchCancelRef.current) {
       toast('Bulk search stopped. Completed results have been saved.');
     } else {
-      const finalProgress = batchProgress;
       toast.success(
         'Bulk search finished. Newly found contacts: ' +
-        (finalProgress ? finalProgress.found : 0) +
-        '. Errors: ' + (finalProgress ? finalProgress.failed : 0) + '.'
+        foundCount + '. Errors: ' + failedCount + '.'
       );
     }
   };
