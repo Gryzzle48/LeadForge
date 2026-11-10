@@ -243,6 +243,14 @@ async def run_grid_search(campaign_id: int, req, _db_session: AsyncSession):
             )
         except Exception as exc:
             logger.exception("Local Maps scraper failed for campaign %s", campaign_id)
-            campaign.status = CampaignStatus.FAILED.value
-            await db.commit()
+            # Clear any failed SQL transaction before persisting the campaign
+            # failure state, so the dashboard does not remain stuck on RUNNING.
+            await db.rollback()
+            failed_result = await db.execute(
+                select(Campaign).where(Campaign.id == campaign_id)
+            )
+            failed_campaign = failed_result.scalar_one_or_none()
+            if failed_campaign:
+                failed_campaign.status = CampaignStatus.FAILED.value
+                await db.commit()
             logger.error("Campaign %s failed: %s", campaign_id, exc)
