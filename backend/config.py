@@ -9,8 +9,24 @@ _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_BACKEND_DIR, ".env"))
 load_dotenv()
 
-GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY", "")
+def _int_env(name: str, default: int, minimum: int) -> int:
+    raw = os.getenv(name, "").strip()
+    try:
+        value = int(raw) if raw else default
+    except ValueError:
+        value = default
+    return max(minimum, value)
+
+
+MAPS_SCRAPER_API_URL = os.getenv("MAPS_SCRAPER_API_URL", "").strip().rstrip("/")
+MAPS_SCRAPER_DEPTH = _int_env("MAPS_SCRAPER_DEPTH", 10, 1)
+# gosom's web API reads max_time as seconds. The scraper often needs several minutes.
+MAPS_SCRAPER_MAX_TIME_SECONDS = _int_env("MAPS_SCRAPER_MAX_TIME_SECONDS", 900, 180)
+MAPS_SCRAPER_POLL_SECONDS = _int_env("MAPS_SCRAPER_POLL_SECONDS", 5, 2)
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+GOOGLE_SPREADSHEET_ID = os.getenv("GOOGLE_SPREADSHEET_ID", "").strip()
+GOOGLE_SHEET_TAB_NAME = os.getenv("GOOGLE_SHEET_TAB_NAME", "").strip()
+# Used only when GOOGLE_SPREADSHEET_ID is empty and a new spreadsheet is created.
 GOOGLE_SHEET_SHARE_EMAIL = os.getenv("GOOGLE_SHEET_SHARE_EMAIL", "").strip()
 API_KEY = os.getenv("API_KEY", "")
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")

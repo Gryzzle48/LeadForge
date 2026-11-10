@@ -45,7 +45,7 @@ jobs:
           python -m pytest tests/ -v --no-header -p no:warnings
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/leadforge
-          GOOGLE_MAPS_API_KEY: test
+          MAPS_SCRAPER_API_URL: http://localhost:8080
           GOOGLE_SERVICE_ACCOUNT_JSON: test
 
   frontend:

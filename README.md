@@ -6,29 +6,45 @@ Find local businesses that have **no website**, save them to a Google Sheet, and
 
 </div>
 
-LeadForge is a small search tool for a web design studio. You pick a business type and a city. It asks Google Places for matching businesses, drops the ones that already have a website, and writes the rest to a spreadsheet: name, category, address, phone, Maps link, rating, and review count, plus a draft email. Nothing is emailed automatically.
+LeadForge searches with a [gosom Google Maps scraper](https://github.com/gosom/google-maps-scraper) you run yourself. It does not call the paid Google Places API. You pick a business type and a city. The scraper reads Google Maps. LeadForge drops businesses that already list their own website and writes the rest to a spreadsheet: name, category, address, phone, Maps link, rating, and review count, plus a draft email. Nothing is emailed automatically.
+
+A blank website, a Maps link, or a social profile (Facebook, Instagram, and similar) counts as no website, because the scraper has already opened the place page.
 
 ## What you need
 
-- A Google Cloud project with billing enabled (Places has a monthly credit)
-- Python 3.11+ and Node.js 18+ for local development
-- Docker, only if you want the included Postgres for local development
+- Docker, for Postgres and the maps scraper
+- Python 3.11+ and Node.js 18+
+- A Google service account only if you export to a spreadsheet you already have
 
-## 1. Turn on the Google APIs
+## 1. Start Postgres and the scraper
 
-In [Google Cloud Console](https://console.cloud.google.com/):
+From the project root:
 
-1. Create a project.
-2. Enable **Places API (New)**. The older "Places API" is a different product and will not work.
-3. Enable **Google Sheets API** and **Google Drive API** (Drive is used only to share the sheet with you).
-4. Create an **API key** for Places. Restrict it to Places API (New) if you want.
-5. Create a **service account**, give it no special project role, and download its JSON key. You will paste that JSON into the backend settings. Do not commit the file.
+```bash
+docker compose up -d
+```
 
-You do **not** need the Geocoding API. City names are looked up with Places.
+That starts:
+
+- Postgres on port 5432
+- gosom on port 8080 (`MAPS_SCRAPER_API_URL=http://localhost:8080`)
+
+The scraper's first start downloads a browser. A search often takes several minutes. Open http://localhost:8080/api/docs to see the scraper API.
+
+The compose service is:
+
+```yaml
+gmaps:
+  image: gosom/google-maps-scraper:latest
+  command: ["-data-folder", "/gmapsdata", "-addr", ":8080"]
+  ports:
+    - "8080:8080"
+  shm_size: "1gb"
+  volumes:
+    - gmapsdata:/gmapsdata
+```
 
 ## 2. Backend settings
-
-Copy the example file and fill it in:
 
 ```bash
 cp backend/.env.example backend/.env
@@ -36,27 +52,28 @@ cp backend/.env.example backend/.env
 
 | Variable | Required | What to put |
 | --- | --- | --- |
-| `GOOGLE_MAPS_API_KEY` | Yes | The Places API (New) key |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | Yes, to export | The service-account JSON, on one line, or that JSON encoded as base64, or a path to the file |
-| `GOOGLE_SHEET_SHARE_EMAIL` | Strongly recommended | Your Gmail address. Each sheet is shared with this address as an editor. If you leave it empty, anyone with the link can edit the sheet |
-| `DATABASE_URL` | Yes | Postgres URL. `postgres://` and `?sslmode=require` (as Railway provides) are accepted |
-| `API_KEY` | No | If set, every API call except `/api/health` must send the same value in the `X-API-Key` header |
-| `CORS_ORIGINS` | No | Comma-separated sites, if something calls the API directly. The Vercel app proxies `/api`, so the browser does not need this |
+| `MAPS_SCRAPER_API_URL` | Yes | Scraper base URL, for example `http://localhost:8080`. No trailing path |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | Only to export | Service-account JSON, that JSON in base64, or a path to the file |
+| `GOOGLE_SPREADSHEET_ID` | Only to export | The id in the sheet URL: `docs.google.com/spreadsheets/d/<this>/edit` |
+| `GOOGLE_SHEET_TAB_NAME` | No | Tab to append to. Defaults to `Leads`. Share that spreadsheet with the service account email as an editor |
+| `DATABASE_URL` | Yes | Postgres. A Railway `postgres://...?sslmode=require` URL is accepted |
+| `API_KEY` | No | If set, every API call except `/api/health` must send it as `X-API-Key` |
+| `CORS_ORIGINS` | No | Comma-separated sites, if something calls the API directly |
+
+Optional Google Sheets export (no Maps or search API key required). If `GOOGLE_SPREADSHEET_ID` is set, each export appends new rows to that tab and skips businesses already listed (same place id, Maps link, or name and phone). The header row is written when the tab is empty. If the spreadsheet id is empty, LeadForge can still create a new spreadsheet. Set `GOOGLE_SHEET_SHARE_EMAIL` only for that fallback, so the new file is shared with you.
 
 `backend/.env` is loaded even if you start the server from the project root. Do not commit it.
 
-## 3. Run it locally
+## 3. Run the app
 
-From the project root:
+Terminal 1, from the project root:
 
 ```bash
-docker compose up -d
 pip install -r backend/requirements.txt
-cp backend/.env.example backend/.env    # then edit it
 uvicorn backend.main:app --reload --port 8000
 ```
 
-In a second terminal:
+Terminal 2:
 
 ```bash
 cd frontend
@@ -67,54 +84,27 @@ npm run dev
 
 Open http://localhost:3000.
 
-`frontend/.env.local`:
-
 ```env
 NEXT_PUBLIC_API_URL=http://localhost:8000
 NEXT_PUBLIC_API_KEY=
 ```
 
-`NEXT_PUBLIC_API_KEY` must match `API_KEY` when you set one. Leave both empty for local use.
-
-Start the API from the **project root**, not from inside `backend/`. The command is `uvicorn backend.main:app`.
-
-## 4. Deploy
-
-**API (Railway)**
-
-1. Deploy this repo with the root `Dockerfile`.
-2. Add Postgres. Railway sets `DATABASE_URL` for you.
-3. Set `GOOGLE_MAPS_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`, and `GOOGLE_SHEET_SHARE_EMAIL`.
-4. Copy the public `https://….up.railway.app` URL. Do not use a `*.railway.internal` hostname.
-
-**Site (Vercel)**
-
-1. Import the repo and set the root directory to `frontend`.
-2. Set `NEXT_PUBLIC_API_URL` to that public Railway URL, with no trailing slash.
-3. Set `NEXT_PUBLIC_API_KEY` only if the backend has `API_KEY`.
-4. Deploy again after changing those variables. Next.js reads them at build time.
-
-The live site at `https://leadforge-tawny-rho.vercel.app` only works after `NEXT_PUBLIC_API_URL` points at the public API. If it is missing, or points at a private host, Vercel answers API calls with `DNS_HOSTNAME_RESOLVED_PRIVATE` and searches do nothing.
+`NEXT_PUBLIC_API_KEY` must match `API_KEY` when you set one. Start the API from the project root with `uvicorn backend.main:app`.
 
 ## How a search works
 
-1. Enter a business type (plumber, dentist, cafe) and a city. Optional filters: radius (100 m to 50 km), minimum rating, and minimum or maximum review count.
-2. The city is located with Places. If that lookup fails, the search stops and says so. It does not quietly search another city.
-3. The area is searched with the official Places API (New). Each request asks for 20 results and follows the next page, up to 60 (the API cap). If a patch of the map comes back full, it is split into smaller patches so smaller businesses are not skipped.
-4. A business is kept only when it has no real website. A Google Maps link does not count as a website. If the search result omits the website, Place Details is checked before the business is saved, so a listed site is not treated as "no website."
-5. Permanently closed businesses are skipped. Rating and review filters are applied to the number you typed. Places rounds ratings up to the next 0.5, which used to drop businesses you asked to keep; the exact cutoff is applied here.
-6. Draft emails are written from the category templates. They are drafts only.
-7. Export creates a **new** sheet (it does not overwrite an older one) with name, category, address, phone, Maps link, rating, reviews, website, email, subject, and draft. Phone numbers are stored as text.
+1. Enter a business type and a city. Optional filters: radius, minimum rating, and minimum or maximum review count. The rating and review filters use the numbers you typed.
+2. LeadForge asks the scraper to search for `{type} in {city}` and polls until the job is `ok` or `failed`. There is no Google Places API key.
+3. Businesses with their own website are left out. Blank websites, Maps links, and social-only pages are kept.
+4. The same place is not saved twice.
+5. Draft emails are written from the category templates. They are drafts only.
+6. Export appends to your spreadsheet. It does not clear rows already there.
 
-Each finished search includes a short note: how many were saved, how many were left out because they have a website, and whether Google returned an error.
-
-The same Google place is not saved twice. A business found in an earlier search stays in that search.
+If the scraper is down, blocked, or still working when the time limit runs out, the search is marked failed and the page shows the reason. It does not stay on "running".
 
 ## Sending mail
 
-The sheet does not contain email addresses. Google does not provide them. Type the address into the Email column, then optionally paste `scripts/apps_script.gs` into Extensions → Apps Script and run `createDrafts`. That creates Gmail drafts. You read them and send them yourself.
-
-The script does not send email and does not install a timer. If you previously installed a timer from an older copy, run `removeAllTriggers` in Apps Script.
+The sheet usually has no email address. Type one into the Email column, then optionally paste `scripts/apps_script.gs` into Extensions → Apps Script and run `createDrafts`. That creates Gmail drafts. You send them yourself. The script does not send mail and does not install a timer.
 
 ## Checks
 
@@ -126,21 +116,19 @@ cd frontend && npm test && npm run build
 ## Layout
 
 ```
-backend/main.py                 API
-backend/workers/places.py       Places paging, website check, filters
-backend/workers/grid_search.py  Runs a search and saves leads
-backend/workers/sheet_exporter.py
-backend/workers/email_writer.py Draft text only
-frontend/                       Next.js site
-scripts/apps_script.gs          Optional Gmail drafts
+backend/workers/gosom.py          Scraper client, website check, filters
+backend/workers/grid_search.py    Runs one search and saves leads
+backend/workers/sheet_exporter.py Appends to your sheet, or creates one
+backend/workers/email_writer.py   Draft text only
+frontend/                         Next.js site
+scripts/apps_script.gs            Optional Gmail drafts
 ```
 
 ## Limits
 
-- Places returns at most 60 results per patch of the map. Very large, dense areas can still miss some businesses. The search stops after a fixed number of calls so one click cannot run up a large bill, and the note tells you when that happens. Use a smaller radius to cover an area more completely.
-- Place Details is called for businesses that look like they have no website. That is a paid Places request. At most 200 of those checks run per search.
-- A sheet created by the service account is private until it is shared. Set `GOOGLE_SHEET_SHARE_EMAIL`.
-- Outreach stays manual. This app will not send messages for you.
+- The scraper is slow, and Google Maps can block it. One search waits up to `MAPS_SCRAPER_MAX_TIME_SECONDS` (default 15 minutes, minimum 3). Use a smaller radius if a job does not finish.
+- Scroll depth defaults to 10 (`MAPS_SCRAPER_DEPTH`). That is the scraper's own page depth, not a Places API page size.
+- A spreadsheet export needs the sheet shared with the service account. Enable the Google Sheets API for that project.
 
 ## License
 
