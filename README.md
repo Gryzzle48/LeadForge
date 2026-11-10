@@ -30,6 +30,8 @@ The script checks that Docker is running, creates `backend/.env` the first time,
 
 Stop it with `./stop.sh` (Windows: `stop.bat`). Watch logs with `docker compose logs -f`.
 
+To erase saved searches and start the local database over, run `./reset-db.sh` (Windows: `reset-db.bat`) and type `YES`. That drops the app tables in the compose Postgres database and restarts the API so empty tables are created again. It does not change your Google Sheet or the gosom scraper data.
+
 Sheets export is optional. To turn it on, put your service-account JSON at `secrets/service-account.json` and set these in `backend/.env` (the file is not committed):
 
 ```env
@@ -103,14 +105,14 @@ NEXT_PUBLIC_API_KEY=
 
 ## How a search works
 
-1. Enter a business type and a city. Optional filters: radius, minimum rating, and minimum or maximum review count. The rating and review filters use the numbers you typed.
-2. LeadForge asks the scraper to search for `{type} in {city}` and polls until the job is `ok` or `failed`. There is no Google Places API key.
-3. Businesses with their own website are left out. Blank websites, Maps links, and social-only pages are kept.
-4. The same place is not saved twice.
-5. Draft emails are written from the category templates. They are drafts only.
-6. Export appends to your spreadsheet. It does not clear rows already there.
+1. Enter a business type and a city. The search covers the whole city, not one radius. Optional: a target number of businesses with no website, plus minimum rating and minimum or maximum review count. Leave the target blank to keep going until the city is covered.
+2. The city outline comes from OpenStreetMap (Nominatim). No Google key. The city is split into tiles, and each tile is one gosom job (`lat`, `lon`, `zoom`, `radius`, `depth`). Tiles run one at a time.
+3. The search stops when the target is reached, when several tiles in a row add no new businesses, when every tile is done, or when the time or tile cap is hit (`SEARCH_MAX_SECONDS`, `SEARCH_MAX_TILES`).
+4. Leads are saved as each tile finishes, show up on the campaign page while the search is still running, and are appended to the Google Sheet when a spreadsheet id is set. You can cancel a running search.
+5. Businesses with their own website are left out. Blank websites, Maps links, and social-only pages are kept. The same place is not saved twice.
+6. Draft emails are written from the category templates. They are drafts only. Nothing is sent.
 
-If the scraper is down, blocked, or still working when the time limit runs out, the search is marked failed and the page shows the reason. It does not stay on "running".
+If the scraper is down or blocked, the search is marked failed and the page shows the reason. It does not stay on "running".
 
 ## Sending mail
 
@@ -136,8 +138,9 @@ scripts/apps_script.gs            Optional Gmail drafts
 
 ## Limits
 
-- The scraper is slow, and Google Maps can block it. One search waits up to `MAPS_SCRAPER_MAX_TIME_SECONDS` (default 15 minutes, minimum 3). Use a smaller radius if a job does not finish.
-- Scroll depth defaults to 10 (`MAPS_SCRAPER_DEPTH`). That is the scraper's own page depth, not a Places API page size.
+- The scraper is slow, and Google Maps can block it. Each tile waits up to `SEARCH_TILE_SECONDS` (default 180). A whole-city search stops after `SEARCH_MAX_SECONDS` (default 5400) or `SEARCH_MAX_TILES` (default 40).
+- Tile size starts at `SEARCH_TILE_KM` (default 3). `SEARCH_EMPTY_TILES` (default 3) is how many areas in a row with no new businesses end the search early.
+- `SEARCH_TILE_DEPTH` (default 4) is how far gosom scrolls each tile.
 - A spreadsheet export needs the sheet shared with the service account. Enable the Google Sheets API for that project.
 
 ## License

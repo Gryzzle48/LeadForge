@@ -11,7 +11,7 @@ interface SearchFormProps {
 export default function SearchForm({ onStart }: SearchFormProps) {
   const [query, setQuery] = useState('');
   const [location, setLocation] = useState('');
-  const [radius, setRadius] = useState(10000);
+  const [targetLeads, setTargetLeads] = useState('');
   const [minRating, setMinRating] = useState('');
   const [minReviews, setMinReviews] = useState('');
   const [maxReviews, setMaxReviews] = useState('');
@@ -30,6 +30,11 @@ export default function SearchForm({ onStart }: SearchFormProps) {
       toast.error('Min reviews cannot be greater than max reviews.');
       return;
     }
+    const target = targetLeads === '' ? null : Number(targetLeads);
+    if (target !== null && (!Number.isInteger(target) || target < 1)) {
+      toast.error('Target leads must be a whole number, or leave it blank to search the whole city.');
+      return;
+    }
     setLoading(true);
     try {
       const res = await apiFetch('/api/search', {
@@ -38,7 +43,7 @@ export default function SearchForm({ onStart }: SearchFormProps) {
         body: JSON.stringify({
           query,
           location,
-          radius,
+          target_leads: target,
           min_rating: minRating ? parseFloat(minRating) : null,
           min_reviews: minReviewCount,
           max_reviews: maxReviewCount,
@@ -72,7 +77,7 @@ export default function SearchForm({ onStart }: SearchFormProps) {
         </div>
         <div>
           <h2 className="text-lg font-semibold text-pearl">New Lead Search</h2>
-          <p className="text-sm text-muted">Find businesses without websites in any area</p>
+          <p className="text-sm text-muted">Search the whole city for businesses without a website</p>
         </div>
       </div>
 
@@ -114,17 +119,16 @@ export default function SearchForm({ onStart }: SearchFormProps) {
 
       <div className="grid md:grid-cols-2 gap-5">
         <div>
-          <label className="input-label">Search Radius</label>
-          <select
+          <label className="input-label">Target leads with no website (optional)</label>
+          <input
             className="input"
-            value={radius}
-            onChange={(e) => setRadius(parseInt(e.target.value))}
-          >
-            <option value={5000}>5 km — Small area</option>
-            <option value={10000}>10 km</option>
-            <option value={25000}>25 km</option>
-            <option value={50000}>50 km — City-wide</option>
-          </select>
+            type="number"
+            min="1"
+            step="1"
+            placeholder="Blank = search until the city is covered"
+            value={targetLeads}
+            onChange={(e) => setTargetLeads(e.target.value)}
+          />
         </div>
 
         <div>

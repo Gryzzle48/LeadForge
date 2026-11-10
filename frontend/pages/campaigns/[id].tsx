@@ -4,6 +4,7 @@ import { ArrowLeft, Loader2, MapPin } from 'lucide-react';
 import ResultsTable from '../../components/ResultsTable';
 import StatusBadge from '../../components/StatusBadge';
 import { apiFetch, errorMessage, readBody } from '../../lib/api';
+import { formatSearchProgress } from '../../lib/progress';
 import toast from 'react-hot-toast';
 
 export default function CampaignPage() {
@@ -72,6 +73,21 @@ export default function CampaignPage() {
               <MapPin className="w-3 h-3" />
               {campaign?.location}
             </p>
+            {campaign?.status === 'running' && (
+              <p className="text-xs text-muted mt-1">
+                {formatSearchProgress(campaign).tiles}
+                {' · '}
+                {formatSearchProgress(campaign).places}
+                {' · '}
+                {formatSearchProgress(campaign).leads}
+                <button
+                  className="btn-secondary text-xs ml-3"
+                  onClick={() => apiFetch(`/api/search/${id}/cancel`, { method: 'POST' })}
+                >
+                  Cancel
+                </button>
+              </p>
+            )}
             {campaign?.status_detail && (
               <p className="text-xs text-muted mt-1 max-w-xl">{campaign.status_detail}</p>
             )}

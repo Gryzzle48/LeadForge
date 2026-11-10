@@ -9,6 +9,15 @@ _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(_BACKEND_DIR, ".env"))
 load_dotenv()
 
+def _float_env(name: str, default: float, minimum: float) -> float:
+    raw = os.getenv(name, "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        value = default
+    return max(minimum, value)
+
+
 def _int_env(name: str, default: int, minimum: int) -> int:
     raw = os.getenv(name, "").strip()
     try:
@@ -23,6 +32,14 @@ MAPS_SCRAPER_DEPTH = _int_env("MAPS_SCRAPER_DEPTH", 10, 1)
 # gosom's web API reads max_time as seconds. The scraper often needs several minutes.
 MAPS_SCRAPER_MAX_TIME_SECONDS = _int_env("MAPS_SCRAPER_MAX_TIME_SECONDS", 900, 180)
 MAPS_SCRAPER_POLL_SECONDS = _int_env("MAPS_SCRAPER_POLL_SECONDS", 5, 2)
+# Whole-city search. Tiles run one at a time so one local scraper is not flooded.
+SEARCH_TILE_KM = _float_env("SEARCH_TILE_KM", 3, 0.5)
+SEARCH_MAX_TILES = _int_env("SEARCH_MAX_TILES", 40, 1)
+SEARCH_MAX_SECONDS = _int_env("SEARCH_MAX_SECONDS", 5400, 60)
+SEARCH_EMPTY_TILES = _int_env("SEARCH_EMPTY_TILES", 3, 1)
+SEARCH_TILE_DEPTH = _int_env("SEARCH_TILE_DEPTH", 4, 1)
+SEARCH_TILE_SECONDS = _int_env("SEARCH_TILE_SECONDS", 180, 30)
+NOMINATIM_USER_AGENT = os.getenv("NOMINATIM_USER_AGENT", "LeadForge/1.0 (local business search)").strip() or "LeadForge/1.0 (local business search)"
 GOOGLE_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
 GOOGLE_SPREADSHEET_ID = os.getenv("GOOGLE_SPREADSHEET_ID", "").strip()
 GOOGLE_SHEET_TAB_NAME = os.getenv("GOOGLE_SHEET_TAB_NAME", "").strip()
