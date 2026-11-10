@@ -11,38 +11,56 @@ export default function Home() {
   const router = useRouter();
   const [status, setStatus] = useState<any>(null);
   const [polling, setPolling] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollGenerationRef = useRef(0);
 
   useEffect(() => {
     return () => {
+      pollGenerationRef.current += 1;
       if (intervalRef.current) {
-        clearInterval(intervalRef.current);
+        clearTimeout(intervalRef.current);
         intervalRef.current = null;
       }
     };
   }, []);
 
   const handleStart = (data: { campaign_id: number; status: string }) => {
+    // The dashboard displays one campaign at a time. Cancel the previous poll
+    // and invalidate any request that is still in flight before tracking this one.
+    if (intervalRef.current) clearTimeout(intervalRef.current);
+    const generation = ++pollGenerationRef.current;
+
     setStatus(null);
     setPolling(true);
-    intervalRef.current = setInterval(async () => {
+
+    const poll = async () => {
       try {
         const res = await apiFetch('/api/search/' + data.campaign_id);
+        if (generation !== pollGenerationRef.current) return;
         if (!res.ok) throw new Error('Could not get search status.');
+
         const result = await res.json();
+        if (generation !== pollGenerationRef.current) return;
+
         setStatus(result);
         if (result.status === 'completed' || result.status === 'failed') {
-          if (intervalRef.current) clearInterval(intervalRef.current);
           intervalRef.current = null;
           setPolling(false);
+          return;
         }
+
+        // Schedule the next request only after this one has finished, preventing
+        // overlapping polls when the API responds slowly.
+        intervalRef.current = setTimeout(poll, 2000);
       } catch {
-        if (intervalRef.current) clearInterval(intervalRef.current);
+        if (generation !== pollGenerationRef.current) return;
         intervalRef.current = null;
         setPolling(false);
-        toast.error('Connection lost. Check your API endpoint.');
+        toast.error('Could not retrieve search status. Check the backend connection.');
       }
-    }, 2000);
+    };
+
+    void poll();
   };
 
   return (
@@ -58,7 +76,7 @@ export default function Home() {
         </p>
       </motion.div>
 
-      <SearchForm onStart={handleStart} />
+      <SearchForm onStart={handleStart} disabled={polling} />
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="grid grid-cols-3 gap-3">
         {[
@@ -123,7 +141,7 @@ export default function Home() {
         {status?.status === 'failed' && !polling && (
           <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="glass-panel p-6 text-center border-danger/30">
             <AlertCircle className="w-10 h-10 text-danger mx-auto mb-3" />
-            <p className="text-sm text-muted">Search failed. Check your API key and location, then try again.</p>
+            <p className="text-sm text-muted">Search failed. The Maps scraper may have timed out. Check the Backend and scraper logs, then try again.</p>
           </motion.div>
         )}
       </AnimatePresence>
