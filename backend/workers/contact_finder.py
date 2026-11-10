@@ -36,13 +36,15 @@ def _extract_contacts(items: list[dict]) -> dict:
     sources: list[str] = []
 
     for item in items:
+        if not isinstance(item, dict):
+            continue
         link = str(item.get("link") or "")
         title = str(item.get("title") or "")
         snippet = str(item.get("snippet") or "")
         text = " ".join((title, snippet, link))
 
         for email in EMAIL_RE.findall(text):
-            normalized = email.strip(".,;:!?)(").lower()
+            normalized = email.strip(".,;:!?()[]{}<>\"'").lower()
             if normalized not in IGNORED_EMAILS and normalized not in emails:
                 emails.append(normalized)
 
@@ -87,11 +89,17 @@ async def find_public_contacts(
             async with session.get(SERPAPI_ENDPOINT, params=params) as response:
                 if response.status != 200:
                     logger.warning("Search provider returned HTTP %s", response.status)
-                    raise RuntimeError(f"Contact search provider returned HTTP {response.status}.")
+                    raise RuntimeError(
+                        f"Contact search provider returned HTTP {response.status}."
+                    )
                 payload = await response.json()
         except asyncio.TimeoutError as exc:
             raise RuntimeError("Contact search timed out. Please try again.") from exc
         except aiohttp.ClientError as exc:
             raise RuntimeError("Could not reach the contact search provider.") from exc
+
+    if payload.get("error"):
+        logger.warning("Search provider error: %s", payload["error"])
+        raise RuntimeError(f"Contact search provider error: {payload['error']}")
 
     return _extract_contacts(payload.get("organic_results") or [])
