@@ -55,7 +55,7 @@ export default function CampaignPage() {
             </div>
             <p className="text-xs text-muted flex items-center gap-1 mt-0.5">
               <MapPin className="w-3 h-3" />
-              {campaign?.city || campaign?.location}, {campaign?.state || campaign?.country}
+              {campaign?.location || [campaign?.city, campaign?.state, campaign?.country].filter(Boolean).join(', ')}
             </p>
           </div>
         </div>
